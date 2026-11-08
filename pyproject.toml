@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77.0.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pq-scitt"
+dynamic = ["version"]
+description = "IETF SCITT export and closed verifier (Ed25519, ML-DSA-65), strict JSON reader, Ed25519 key checks, hash-chain ledger verifiers, SLH-DSA anchors"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Roberto Locatelli" }]
+dependencies = ["cryptography>=50.0.1"]
+
+[project.optional-dependencies]
+slh = ["slh-dsa>=0.2.5"]
+
+[project.scripts]
+pq-scitt = "pq_scitt.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["pq_scitt", "pq_scitt.scitt", "pq_scitt.anchors", "pq_scitt.ledger"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pq_scitt.__version__" }

@@ -1,0 +1,14 @@
+pq-scitt
+Copyright 2026 Roberto Locatelli
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Test vectors in tests/ come from third parties and keep their own terms:
+- Merkle tree roots for 1..8 leaves from transparency-dev/merkle (testonly/constants.go), Apache License 2.0.
+- tests/data/acvp_slhdsa_sha2_128f.json: a subset of the SLH-DSA sigGen test vectors of the National Institute of
+  Standards and Technology (NIST), usnistgov/ACVP-Server commit 975de31eb83d87039ec88934fdc47d8c312b892d,
+  gen-val/json-files/SLH-DSA-sigGen-FIPS205/internalProjection.json. Changed on 2026-11-08: only the SLH-DSA-SHA2-128f
+  cases were kept and the fields renamed; the source file hash is recorded inside the file. Source: NIST.
+- tests/data/wycheproof_ed25519_test.json: Project Wycheproof (C2SP/wycheproof, testvectors_v1/ed25519_test.json,
+  unchanged, sha256 ea80ffebac085e21cb9d3e903e7fa2b448d96702da5b31f061d0b83b430b74b3, equal to the file at commit
+  d17cc89fa5c8f4f4d378b5385ebf75da5d0926c9, checked on 2026-11-08), Apache License 2.0.

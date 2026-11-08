@@ -1,0 +1,41 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install (hash-pinned)
+        run: |
+          python -m pip install --require-hashes -r requirements/ci.txt
+          python -m pip install --no-deps .
+      - name: Install gitleaks 8.30.1 (sha256 checked)
+        run: |
+          curl -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin" && tar -xzf gitleaks.tgz -C "$RUNNER_TEMP/bin" gitleaks && rm gitleaks.tgz
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: File list, imports, deny-list, secrets
+        run: |
+          python check_tree.py
+          python check_tree.py --positive-control
+      - name: Tests (against the installed package)
+        run: |
+          cd tests
+          python -c 'import pq_scitt, sys; assert "site-packages" in pq_scitt.__file__, pq_scitt.__file__; print(pq_scitt.__file__)'
+          python -B -m unittest test_verify_ledger_full test_scitt test_anchor_slhdsa_fips205 test_kms_reali test_kms_http test_wycheproof_ed25519 test_cli test_readme_example test_strict_json
+          python -B test_verify_ledger.py

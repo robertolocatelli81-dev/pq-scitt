@@ -1,0 +1,7 @@
+# sdist: everything needed to run the test suite from the unpacked archive
+include NOTICE CONTRIBUTING.md SECURITY.md FILE_LIST.tsv check_tree.py MANIFEST.in
+recursive-include requirements *.txt
+recursive-include tests *.py
+recursive-include tests/data *.json
+recursive-include examples *.jsonl
+global-exclude __pycache__ *.py[cod]

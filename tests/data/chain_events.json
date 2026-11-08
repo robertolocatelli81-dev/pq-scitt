@@ -1,0 +1,180 @@
+{
+ "n1": [
+  {
+   "event_id": "14405e65-ff4d-412c-bbad-7caf7a310946",
+   "event_type": "AUDIT",
+   "origin_node": "n",
+   "payload": {
+    "n": 1
+   },
+   "payload_sha3": "012c3aa852c17a54e1320ed6ddca40145d6d11f10ba571c85d6128504362d94a",
+   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+   "self_hash": "e2d7d0e618f5601789bf6f579aecbd0806a6dd177367a7cbb4b6eb4521aedd6e",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  }
+ ],
+ "n4": [
+  {
+   "event_id": "1ab96f00-4ae9-4806-908f-e739507b09cc",
+   "event_type": "AUDIT",
+   "origin_node": "n",
+   "payload": {
+    "i": 0
+   },
+   "payload_sha3": "4602c277fe6f4a7d3b4d4fdba94a8f167db3caad2d1f8bc1afc3234b868d399a",
+   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+   "self_hash": "d62f29a218777340e02e2412440a3684e244e0d767ea32aed1a3f7c0f646277f",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "414301b9-4b67-46e1-a1e9-16179f8c2d62",
+   "event_type": "AUDIT",
+   "origin_node": "n",
+   "payload": {
+    "i": 1
+   },
+   "payload_sha3": "942e8a9787f4aa5c67941d91b3893aea9290b5929c28d28a7b8aa7867e6af87c",
+   "prev_hash": "d62f29a218777340e02e2412440a3684e244e0d767ea32aed1a3f7c0f646277f",
+   "self_hash": "4b1849f50604427cfc2c6ec03b7e7dda271e27cbbbcad01170a7a85afc8805ec",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "3a31cd0f-48f8-4bf6-98d6-8c2b56e77630",
+   "event_type": "AUDIT",
+   "origin_node": "n",
+   "payload": {
+    "i": 2
+   },
+   "payload_sha3": "4a112ca338320b90684b61d2b42f6ef7810a5073dd99c6fd23e0506d3dc3239e",
+   "prev_hash": "4b1849f50604427cfc2c6ec03b7e7dda271e27cbbbcad01170a7a85afc8805ec",
+   "self_hash": "e409c63d464d0530e5a0c73a1d6e3ad2054e6810aa7ed343e9f591c14596f82c",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "610c14ec-e49c-4cfb-a070-984bf496a9ee",
+   "event_type": "AUDIT",
+   "origin_node": "n",
+   "payload": {
+    "i": 3
+   },
+   "payload_sha3": "d2b63668dc27cf6a9ffe8be2a98a26a9b77c77cd231e4a82b2e2caf7a60fab3f",
+   "prev_hash": "e409c63d464d0530e5a0c73a1d6e3ad2054e6810aa7ed343e9f591c14596f82c",
+   "self_hash": "bfbe1e67d716c6221279e8a42dcd06736efde0a1694e6e6c6ee335f2dc525f30",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  }
+ ],
+ "t7": [
+  {
+   "event_id": "88a88c2f-7552-43f8-9932-1d0adf613477",
+   "event_type": "AUDIT",
+   "origin_node": "nodo-test",
+   "payload": {
+    "n": 0
+   },
+   "payload_sha3": "536ffb46231ee5b516ef92e221c24ba67a15069e6e0fd30b26e3ecbd1dc41a09",
+   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+   "self_hash": "e3e053164a510e369bac67225d939ed629a85bd71045941ab6e06d319fa455dc",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "0afb7ee1-d530-4c18-bbbe-c27478d988a9",
+   "event_type": "AUDIT",
+   "origin_node": "nodo-test",
+   "payload": {
+    "n": 1
+   },
+   "payload_sha3": "012c3aa852c17a54e1320ed6ddca40145d6d11f10ba571c85d6128504362d94a",
+   "prev_hash": "e3e053164a510e369bac67225d939ed629a85bd71045941ab6e06d319fa455dc",
+   "self_hash": "672e2c264ac5d869e1953803cbf37f6a989ae9802d102eaeaeea13e54e53b34b",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "b2859a4c-3b30-445f-b60d-bed998c8b2e1",
+   "event_type": "AUDIT",
+   "origin_node": "nodo-test",
+   "payload": {
+    "n": 2
+   },
+   "payload_sha3": "70b75db0f771995fb37347027b82f11c78f7d6b306921f4f5041589d42f94e28",
+   "prev_hash": "672e2c264ac5d869e1953803cbf37f6a989ae9802d102eaeaeea13e54e53b34b",
+   "self_hash": "b07a068cf2b04c0ea08455b22bdd5dea15de9c7adac85bc4dff7bfb84ca7d9dd",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "152bce22-e8d3-4bbf-8c9a-9df78aa45e10",
+   "event_type": "AUDIT",
+   "origin_node": "nodo-test",
+   "payload": {
+    "n": 3
+   },
+   "payload_sha3": "0a8c8af814fee6c39d9b9778dc0b9260879e3800b98eece8cb4c20dd66e1b97a",
+   "prev_hash": "b07a068cf2b04c0ea08455b22bdd5dea15de9c7adac85bc4dff7bfb84ca7d9dd",
+   "self_hash": "ced81108dc1c4111b5de94319801f40574f41b3da33cbd3918e779ba1d1b21f2",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "3d8db6a0-90c8-49bd-b978-b27588382ae4",
+   "event_type": "AUDIT",
+   "origin_node": "nodo-test",
+   "payload": {
+    "n": 4
+   },
+   "payload_sha3": "d1e26c8627bc96aa3e0c0aba3067cb95dad452c5950f8c0798d9418c2d9cfc67",
+   "prev_hash": "ced81108dc1c4111b5de94319801f40574f41b3da33cbd3918e779ba1d1b21f2",
+   "self_hash": "63f4f9c2a299b505d264017e884f9961228635868332f75786aa4f3c71a1945e",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "d56fbf87-f344-4a66-af9c-333ee469c684",
+   "event_type": "AUDIT",
+   "origin_node": "nodo-test",
+   "payload": {
+    "n": 5
+   },
+   "payload_sha3": "324aee74afb7f22f7c1e27e7c736aff15916557b9d9865939ca3b0eca3bb618a",
+   "prev_hash": "63f4f9c2a299b505d264017e884f9961228635868332f75786aa4f3c71a1945e",
+   "self_hash": "f3425f36df208a5f8db3358e7aecf86bb59c9309cc09154df6ab41ace5123db5",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  },
+  {
+   "event_id": "efe53618-ae38-4e70-a4b5-0f8a2fc7003b",
+   "event_type": "AUDIT",
+   "origin_node": "nodo-test",
+   "payload": {
+    "n": 6
+   },
+   "payload_sha3": "4fbfcf336bb1a98eb4a40817ac3e05efa6fa58accfea49b71eb16843ea462691",
+   "prev_hash": "f3425f36df208a5f8db3358e7aecf86bb59c9309cc09154df6ab41ace5123db5",
+   "self_hash": "326cda89de30eb1770b42ec0a124f75e2094cff595698238cc56a66f9fb7fa1c",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  }
+ ],
+ "u1": [
+  {
+   "event_id": "8f0afcf2-9fc6-46a7-914c-81df256d5052",
+   "event_type": "AUDIT",
+   "origin_node": "nodo-è",
+   "payload": {
+    "a": 1,
+    "z": "città"
+   },
+   "payload_sha3": "c7fab892adcb80584319ce607afe195e5fc6428378546ba3a297aae137bed6d6",
+   "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+   "self_hash": "ea05382f3958cdb557bff8b6d0484bc560ba565a05b1e90a8f1770c73056a764",
+   "signature": "",
+   "timestamp": "2026-11-08T18:46:15Z"
+  }
+ ]
+}
