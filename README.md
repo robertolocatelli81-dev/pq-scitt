@@ -44,7 +44,7 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
   The skip: one SLH-DSA test needs `liboqs-python`. SoftHSM2, `pkcs11-tool` and podman with the Vault image were
   installed, so the 21 real-backend tests in `tests/test_kms_reali.py` ran; without them those 21 skip (measured on
   3.12: 243 run, 0 failed, 22 skipped). On the public CI (GitHub Actions `ubuntu-24.04`, no SoftHSM2 or podman) the
-  expected result is therefore 243 run, 22 skipped; not yet measured there. The tests of the `chain` event format use
+  result is 243 run, 0 failed, 22 skipped on Python 3.10 to 3.14 (first CI run, 8 November 2026). The tests of the `chain` event format use
   events produced by the original implementation of that format, frozen in `tests/data/chain_events.json`.
 - **Conformance measurements** that can be repeated from this repository (run from `tests/`, package installed):
 
