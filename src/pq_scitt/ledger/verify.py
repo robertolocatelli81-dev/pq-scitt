@@ -157,7 +157,7 @@ def _generic_recompute_verify(entries: List[Dict], started: str, path: str) -> O
     passed = (not hash_failures) and (not link_failures)
     receipt = {
         "verified_utc": started,
-        "verifier": "pq-scitt ledger.verify 0.1.0 (stdlib-only, generic full-recompute)",
+        "verifier": "pq-scitt ledger.verify 0.1.1 (stdlib-only, generic full-recompute)",
         "path": path,
         "mode": "full_recompute_generic",
         "algorithm_used": algo,
@@ -208,7 +208,7 @@ def _linkage_verify(entries: List[Dict], started: str, path: str) -> Optional[Di
     linked = len(link_failures) == 0
     receipt = {
         "verified_utc": started,
-        "verifier": "pq-scitt ledger.verify 0.1.0 (stdlib-only, linkage mode)",
+        "verifier": "pq-scitt ledger.verify 0.1.1 (stdlib-only, linkage mode)",
         "path": path,
         "mode": "linkage",
         "scheme_note": (
@@ -549,7 +549,7 @@ def verify_ledger(path: str, algo: Optional[str] = None, *,
 
     receipt: Dict = {
         "verified_utc": started,
-        "verifier": "pq-scitt ledger.verify 0.1.0 (stdlib-only)",
+        "verifier": "pq-scitt ledger.verify 0.1.1 (stdlib-only)",
         "path": path,
         "algorithm_used": algo,
         "algorithm_supported": list(SUPPORTED_ALGOS),

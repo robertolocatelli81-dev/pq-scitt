@@ -243,5 +243,18 @@ class TestCacciaInputSpeciali(unittest.TestCase):
         rc, out, err = _esegui(["verify-ledger", p, "--out", os.path.join(d, "r.json")])   # positive control
         self.assertEqual(rc, 0)
 
+class TestVersioneNelleRicevute(unittest.TestCase):
+    def test_ricevute_nominano_la_versione_installata(self):
+        """The `verifier` field of the verify-ledger and verify-ledger-standalone receipts names the version: it must be
+        the installed one (0.1.1: the literal was 0.1.0 in both)."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        p = _registro(d)
+        for sub in ("verify-ledger", "verify-ledger-standalone"):
+            rc, out, err = _esegui([sub, p])
+            self.assertEqual(rc, 0, (sub, err))
+            self.assertIn(" %s (" % pq_scitt.__version__, json.loads(out)["verifier"], sub)
+
+
 if __name__ == "__main__":
     unittest.main()

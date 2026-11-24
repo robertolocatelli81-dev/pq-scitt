@@ -11,4 +11,4 @@ hang on untrusted input, a key or signature check that can be bypassed, a secret
 
 There is no bug bounty.
 
-Supported versions: the latest release (v0.1.0, 12 November 2026) and the latest commit of the default branch.
+Supported versions: the latest release (see `CHANGELOG.md`) and the latest commit of the default branch.

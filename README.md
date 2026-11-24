@@ -37,8 +37,8 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
 
 ## Status
 
-- **First release**: version 0.1.0, a GitHub release (12 November 2026: wheel, sdist, SHA256SUMS), not on PyPI. Extracted on 2026-11-08 from a larger private code base
-  by the same author.
+- **Releases**: 0.1.0, a GitHub release (12 November 2026: wheel, sdist, SHA256SUMS), not on PyPI, extracted on
+  2026-11-08 from a larger private code base by the same author; 0.1.1 fixes the defects listed in `CHANGELOG.md`.
 - **One maintainer** (Roberto Locatelli). No independent review outside the author's own process yet.
 - **Tests** of version 0.1.0, measured on 2026-11-08 on Linux x86-64 in clean virtual environments, against the **installed wheel**
   (dependencies from `requirements/ci.txt`): Python 3.10.22, 3.11.2, 3.12.15, 3.13.15 and 3.14.8, each 243 unittest
@@ -49,6 +49,12 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
   result is 243 run, 0 failed, 22 skipped on Python 3.10 to 3.14 (the two CI runs on `main` of 8 November 2026,
   commits 4bf24e9 and 9692a74). The tests of the `chain` event format use
   events produced by the original implementation of that format, frozen in `tests/data/chain_events.json`.
+- **Tests of version 0.1.1**, measured on 2026-11-24 on Linux x86-64 against the installed package (dependencies from
+  `requirements/ci.txt`): Python 3.11.2, 3.12.15 and 3.14.8, each 254 run, 0 failed, plus `test_verify_ledger.py` 3/3;
+  9 skipped with `slh-dsa` (8 Vault tests: the Vault image was not available to the measuring user; 1 needs
+  `liboqs-python`), 20 skipped without it. The CI (`.github/workflows/ci.yml`) runs Linux with Python 3.10 to 3.14 and
+  macOS and Windows with 3.13, each with and without `slh-dsa`; on macOS and Windows the tests that need a FIFO, POSIX
+  file permissions or a POSIX `sh` skip with the reason.
 - **Conformance measurements** that can be repeated from this repository (run from `tests/`, package installed):
 
 | What | Measured on 2026-11-08 | Command |
@@ -74,6 +80,8 @@ pip install --no-deps .
 
 `pip install .` alone also works and resolves `cryptography>=50.0.1` (the only required dependency).
 SLH-DSA anchors need the optional `slh-dsa` package (`pip install '.[slh]'`, LGPL-3.0-or-later) or `liboqs-python`.
+On Windows (no `O_NOFOLLOW`, no `geteuid`) `pq-scitt export` refuses `file:` keys and the salts file of profile 2
+`riservato`, because their owner, link and permission checks cannot be made there: use a KMS/HSM URI or `--effimere`.
 
 ## Example (5 commands)
 

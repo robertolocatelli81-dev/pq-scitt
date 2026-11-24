@@ -880,7 +880,7 @@ def verify_ledger(path: str, algo: Optional[str] = None, tip: Optional[str] = No
 
     receipt: Dict = {
         "verified_utc": started,
-        "verifier": "pq-scitt ledger.standalone 0.1.0 (stdlib-only)",
+        "verifier": "pq-scitt ledger.standalone 0.1.1 (stdlib-only)",
         "path": path,
         "algorithm_used": algo,
         "algorithm_supported": list(SUPPORTED_ALGOS),
