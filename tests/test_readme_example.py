@@ -63,6 +63,9 @@ class TestEsempioReadme(unittest.TestCase):
 
     def _esegui(self, blocco, altera=None):
         """Runs the block with POSIX sh -e in a fresh folder holding a copy of examples/ledger.jsonl."""
+        import shutil
+        if shutil.which("sh") is None:   # 0.1.1: the block is POSIX sh; a platform without sh skips with the reason
+            self.skipTest("no POSIX sh on PATH")
         with tempfile.TemporaryDirectory() as d:
             os.mkdir(os.path.join(d, "examples"))
             with open(os.path.join(RADICE, "examples", "ledger.jsonl"), encoding="utf-8") as f:

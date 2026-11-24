@@ -21,6 +21,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "cor
 
 from pq_scitt.ledger.verify import verify_ledger, canonical_payload, GENESIS_PREV
 
+# 0.1.1: the marks below are not in every console encoding (Windows cp1252): written escaped, never a traceback
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(errors="backslashreplace")
+
 PASS = FAIL = 0
 
 

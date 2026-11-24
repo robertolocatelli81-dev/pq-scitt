@@ -1,17 +1,25 @@
 name: ci
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
 permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    name: test (${{ matrix.os }}, ${{ matrix.python }}, slh ${{ matrix.slh }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-24.04]
         python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        slh: ["with", "without"]
+        include:
+          - {os: macos-15, python: "3.13", slh: "with"}
+          - {os: macos-15, python: "3.13", slh: "without"}
+          - {os: windows-2025, python: "3.13", slh: "with"}
+          - {os: windows-2025, python: "3.13", slh: "without"}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -20,20 +28,32 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install (hash-pinned)
+        shell: bash
         run: |
           python -m pip install --require-hashes -r requirements/ci.txt
           python -m pip install --no-deps .
+      - name: Without the optional slh-dsa (the "slh" extra), checked
+        if: matrix.slh == 'without'
+        shell: bash
+        run: |
+          python -m pip uninstall -y slh-dsa
+          python -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("slhdsa") is not None)'
       - name: Install gitleaks 8.30.1 (sha256 checked)
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
           curl -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tgz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/bin" && tar -xzf gitleaks.tgz -C "$RUNNER_TEMP/bin" gitleaks && rm gitleaks.tgz
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: File list, imports, deny-list, secrets
+      - name: File list, imports, deny-list, secrets (repository content, checked on Linux)
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
           python check_tree.py
           python check_tree.py --positive-control
       - name: Tests (against the installed package)
+        shell: bash
         run: |
           cd tests
           python -c 'import pq_scitt, sys; assert "site-packages" in pq_scitt.__file__, pq_scitt.__file__; print(pq_scitt.__file__)'

@@ -27,6 +27,11 @@ from pq_scitt.scitt import export as sx  # noqa: E402
 from pq_scitt.scitt import verify as sv  # noqa: E402
 from pq_scitt import strict_json  # noqa: E402
 
+# 0.1.1: what the platform does not have is skipped with its reason (Windows: no mkfifo; key and salts files
+# need O_NOFOLLOW and geteuid, refused there: test_senza_posix_rifiuta)
+HAVE_FIFO = hasattr(os, "mkfifo")
+POSIX_FILE = hasattr(os, "O_NOFOLLOW") and hasattr(os, "geteuid")
+
 
 def _firmatario(alg):
     if alg == sx.ALG_MLDSA65:
@@ -607,6 +612,7 @@ class TestRevisioneP1P2(unittest.TestCase):
         sx.scrivi_cartella(b.es, d)
         return d, dict(alg_statement=-19, alg_receipt=-19, chiave_ts=(-19, b.T.pub), chiave_politica=(-19, b.P.pub))
 
+    @unittest.skipUnless(HAVE_FIFO, "needs os.mkfifo (not on this platform)")
     def test_file_non_regolari(self):
         b = Banco(n=4)
         for tipo in ("fifo", "dir", "illeggibile"):
@@ -766,6 +772,7 @@ class TestRevisioneP1P2(unittest.TestCase):
                                                   chiavi_ts={})
         self.assertEqual((e.ok, e.motivo), (False, "cbor_troppo_profondo"))
 
+    @unittest.skipUnless(HAVE_FIFO, "needs os.mkfifo (not on this platform)")
     def test_descrittore_zero_chiuso_dopo_rifiuto(self):
         """Stdin closed: os.open gives descriptor 0 to the first file; a non-regular file must be refused AND closed."""
         import subprocess
@@ -1142,6 +1149,7 @@ class TestChiaviPersistenti(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.d, True)
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_file_formati_ammessi(self):
         ke = ed25519.Ed25519PrivateKey.generate()
         km = mldsa.MLDSA65PrivateKey.generate()
@@ -1159,6 +1167,7 @@ class TestChiaviPersistenti(unittest.TestCase):
                 self.assertEqual((f.alg, f.pub), (alg, pub), (i, modo))
                 sx.signed_statement(f, "i", "omega-ledger:a", sx.CTY_RIGA_OPS, b"{}")   # sign and self-verify
 
+    @unittest.skipUnless(HAVE_FIFO and POSIX_FILE, "needs os.mkfifo and POSIX owner/link/permission checks (not on this platform)")
     def test_file_rifiutati(self):
         from cryptography.hazmat.primitives import serialization as ser
         ke = ed25519.Ed25519PrivateKey.generate()
@@ -1312,6 +1321,7 @@ class TestCLIExport(unittest.TestCase):
             self.assertEqual(c.exception.code, 2, argv)
         self.assertFalse(os.path.exists(u))
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_chiavi_da_file_e_rifiuti(self):
         chiavi = []
         for n in ("i", "t", "p"):
@@ -1361,6 +1371,7 @@ class TestRevisioneA2(unittest.TestCase):
         os.chmod(p, 0o600)
         return "file:" + p
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_pem_solo_un_blocco(self):
         self.assertEqual(sx.carica_firmatario(self._file("ok.pem", self.pem + b"\n"), -19).pub,
                          self.k.public_key().public_bytes_raw())
@@ -1426,6 +1437,7 @@ class TestRevisioneA2(unittest.TestCase):
                             iss_issuer="i", iss_ts="t", payload="riservato")
             self.assertEqual(es["tree_size"], 3)
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_file_cresciuto_dopo_fstat(self):
         """st_size says 100 bytes, the file has 64 KiB + 10: the limit applies to the bytes read."""
         from unittest import mock
@@ -1456,6 +1468,7 @@ class TestRevisioneA2(unittest.TestCase):
         self.assertEqual(sx._main([reg, os.path.join(self.d, "u"), "--nome", "r", "--versione", "1", "--payload", "riservato",
                                    "--effimere"]), 0)                       # positive control
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_misto_chiavi_effimere_codice_2(self):
         """Surviving mutants in review A2: `any`→`all` and p.error(mixed)→pass. Mixing is a usage error (rc 2),
         before touching files or the ledger."""
@@ -1871,6 +1884,7 @@ class TestSalePerRiga(unittest.TestCase):
         dati = sx.aggiungi_receipt(st, sx.receipt(b.T, "omega.ts", b.es["sub"], a.radice(), 2, 0, a.percorso(0), ADESSO))
         self.assertEqual(b.verifica(dati).motivo, "catena_riga_non_valida")
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_leggi_e_scrivi_sali(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
@@ -1916,6 +1930,7 @@ class TestCLIVersione2(unittest.TestCase):
         m = json_manifest(u)["chiavi_pubbliche_da_confrontare_fuori_banda"]
         return ["--ts-pub", m["ts"][1], "--politica-pub", m["politica"][1]]
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_riservato_v2_con_sali(self):
         u, s = os.path.join(self.d, "u"), os.path.join(self.d, "sali.jsonl")
         self.assertEqual(sx._main([self.reg, u, "--nome", "r", "--payload", "riservato", "--effimere", "--sali", s]), 0)
@@ -1967,6 +1982,7 @@ class TestCLIVersione2(unittest.TestCase):
             self.assertEqual("WARNING format 1" in out.getvalue(), avviso, payload)
         self.assertEqual(json_manifest(u)["profilo"], "omega-scitt/2")
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_chiavi_persistenti_vogliono_validita(self):
         k = []
         for n in "itp":
@@ -2291,6 +2307,7 @@ class TestConsistenza(unittest.TestCase):
         with self.assertRaises(sx.ExportError):
             sx.estendi(c, r1, **kw1)
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_cli(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
@@ -2399,6 +2416,7 @@ class TestRevisioneScitt2(unittest.TestCase):
         e = sv.verifica_cartella(_cartella_di(self, _riforgia(b, d)), **_arg_cartella(b))
         self.assertEqual((e.ok, e.motivo), (False, "politica_fuori_profilo"))
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_p2_uscita_esistente_rifiutata(self):
         import io
         from contextlib import redirect_stdout
@@ -2465,6 +2483,7 @@ class TestRevisioneScitt2(unittest.TestCase):
         self.assertEqual(out, "[0, 1]")                                       # only one creates the output
         self.assertTrue(es["tree_size"] == 4)
 
+    @unittest.skipUnless(HAVE_FIFO, "needs os.mkfifo (not on this platform)")
     def test_p4_file_dei_sali_regolare(self):
         import subprocess
         d = tempfile.mkdtemp()
@@ -2486,6 +2505,7 @@ class TestRevisioneScitt2(unittest.TestCase):
         sx.scrivi_sali([bytes(range(32)), bytes(32)], buono)
         self.assertEqual(sx.leggi_sali(buono), [bytes(range(32)), bytes(32)])     # positive control
 
+    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
     def test_cli_dice_sali_solo_se_usati(self):
         import io
         from contextlib import redirect_stdout
@@ -2596,6 +2616,30 @@ class TestRevisioneScitt2(unittest.TestCase):
         self.assertTrue(sv.verifica_cartella(_cartella_di(self, b2.es), righe=righe, sali=b2.es["sali"],
                                              **_arg_cartella(b2)).ok)         # positive control
 
+
+class TestSenzaPosix(unittest.TestCase):
+    def test_senza_posix_rifiuta(self):
+        """0.1.1: without O_NOFOLLOW/geteuid (Windows) a key file and a salts file are refused with a reason; on 0.1.0
+        it was an AttributeError traceback. Simulated here by removing the two names for the duration of the test."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        chiave = os.path.join(d, "k")
+        with open(chiave, "w") as f:
+            f.write("00" * 32)
+        tolti = {n: getattr(os, n) for n in ("O_NOFOLLOW", "geteuid") if hasattr(os, n)}
+        for n in tolti:
+            delattr(os, n)
+        try:
+            with self.assertRaises(sx.ExportError) as c:
+                sx.carica_firmatario("file:" + chiave, sx.ALG_ED25519)
+            self.assertIn("need a POSIX system", str(c.exception))
+            with self.assertRaises(sx.ExportError) as c:
+                sx.scrivi_sali([b"\x00" * 32], os.path.join(d, "sali"))
+            self.assertIn("needs a POSIX system", str(c.exception))
+        finally:
+            for n, v in tolti.items():
+                setattr(os, n, v)
+        self.assertFalse(os.path.exists(os.path.join(d, "sali")))
 
 if __name__ == "__main__":
     unittest.main()

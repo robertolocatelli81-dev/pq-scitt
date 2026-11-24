@@ -155,14 +155,21 @@ class TestCacciaInputSpeciali(unittest.TestCase):
     non-UTF-8 name was a traceback. Each command must answer with a refusal, in bounded time and memory."""
 
     def _cli(self, *argv, env=None):
-        import resource
+        try:
+            import resource
+        except ImportError:   # Windows: no address-space limit (and no /dev/zero to read)
+            resource = None
+
         def limite():   # 1 GiB of address space: /dev/zero read whole fails fast instead of taking the machine
-            resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+            try:
+                resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+            except (ValueError, OSError):   # macOS may refuse to lower RLIMIT_AS: the fixed code does not need it
+                pass
         e = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
         e.update(env or {})
         try:
             r = subprocess.run([sys.executable, "-B", "-m", "pq_scitt"] + list(argv), capture_output=True, timeout=30,
-                               env=e, preexec_fn=limite)
+                               env=e, preexec_fn=limite if resource else None)
         except subprocess.TimeoutExpired:
             self.fail("%s blocked (30 s)" % (argv,))
         self.assertNotIn(b"Traceback", r.stderr, (argv, r.stderr[-300:]))
@@ -172,8 +179,13 @@ class TestCacciaInputSpeciali(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(__import__("shutil").rmtree, d, True)
         fifo, buono = os.path.join(d, "fifo"), _registro(d)
-        os.mkfifo(fifo)
-        for p in (fifo, "/dev/zero", d):
+        speciali = [d]                                    # what the platform has: a FIFO and /dev/zero are POSIX
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(fifo)
+            speciali.append(fifo)
+        if os.path.exists("/dev/zero"):
+            speciali.append("/dev/zero")
+        for p in speciali:
             with self.subTest(p):
                 for sub in ("verify-ledger", "verify-ledger-standalone"):
                     r = self._cli(sub, p)
@@ -199,7 +211,11 @@ class TestCacciaInputSpeciali(unittest.TestCase):
         """A refusal that names a non-UTF-8 file or argument (surrogateescape) is written, not a UnicodeEncodeError."""
         d = tempfile.mkdtemp()
         self.addCleanup(__import__("shutil").rmtree, d, True)
-        os.mkdir(os.path.join(os.fsencode(d), b"ts_\xff.cose"))   # first leaf, not a regular file: named in the refusal
+        try:   # first leaf, not a regular file: named in the refusal; APFS/NTFS refuse a non-UTF-8 name
+            os.mkdir(os.path.join(os.fsencode(d), b"ts_\xff.cose"))
+            nome_cattivo = True
+        except (OSError, ValueError, UnicodeError):
+            nome_cattivo = False
         uscita = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")   # errors="strict", as in a UTF-8 locale
         with contextlib.redirect_stdout(uscita):
             rc1 = verify._main([d, "--alg", "-19", "--ts-pub", "00" * 32, "--politica-pub", "11" * 32])
@@ -209,7 +225,8 @@ class TestCacciaInputSpeciali(unittest.TestCase):
         uscita.flush()
         testo = uscita.buffer.getvalue().decode("utf-8")
         self.assertEqual((rc1, rc2), (1, 1))
-        self.assertIn("REFUSED forma_cose ts_\\udcff.cose: not a regular file", testo)
+        if nome_cattivo:
+            self.assertIn("REFUSED forma_cose ts_\\udcff.cose: not a regular file", testo)
         self.assertIn("key scheme not allowed: \\udcff", testo)
 
     def test_ancora_hmac_e_out(self):

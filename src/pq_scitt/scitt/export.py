@@ -315,7 +315,12 @@ SCHEMI_KMS_ED25519 = ("pkcs11", "awskms", "awskms-http", "vault", "nethsm")
 def _leggi_file_chiave(percorso: str) -> bytes:
     """Amendment 7: regular file, last component not a link (O_NOFOLLOW; the directories of the path are not
     checked), owned by the running user, no group or other bits, ≤ 64 KiB.
-    Checks on the open descriptor (fstat), not on the name: no window between check and read."""
+    Checks on the open descriptor (fstat), not on the name: no window between check and read.
+    Without O_NOFOLLOW and geteuid (Windows) these checks cannot be made: refused, never skipped (0.1.1; on 0.1.0 it
+    was an AttributeError traceback)."""
+    if not (hasattr(os, "O_NOFOLLOW") and hasattr(os, "geteuid")):
+        raise ExportError("key file: the owner, link and permission checks need a POSIX system; use a KMS/HSM URI or "
+                          "--effimere")
     try:
         fd = os.open(percorso, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
     except (OSError, ValueError) as e:   # ValueError: NUL byte in the path (API only)
@@ -733,7 +738,10 @@ def _crea_uscita(cartella: str) -> None:
 
 
 def scrivi_sali(sali: Sequence[bytes], percorso: str) -> None:
-    """Amendment 10b: NEW file (O_EXCL, no links), 0600, one line {"idx", "sale"} per ledger line."""
+    """Amendment 10b: NEW file (O_EXCL, no links), 0600, one line {"idx", "sale"} per ledger line. Without POSIX
+    permissions (Windows) the 0600 mode is not applied: refused (0.1.1; on 0.1.0 an AttributeError traceback)."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ExportError("salts: the 0600 file mode needs a POSIX system; the salts are secret")
     try:
         fd = os.open(percorso, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     except (OSError, ValueError) as e:

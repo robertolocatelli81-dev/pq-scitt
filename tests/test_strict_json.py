@@ -82,24 +82,38 @@ class TestCaccia20261124(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         fifo, buono = os.path.join(d, "f"), os.path.join(d, "l.jsonl")
-        os.mkfifo(fifo)
+        speciali = [d]                                    # a FIFO and /dev/zero only where the platform has them
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(fifo)
+            speciali.append(fifo)
+        if os.path.exists("/dev/zero"):
+            speciali.append("/dev/zero")
         with open(buono, "wb") as f:
             f.write(b'{"a":1}\n\n{"b":2}\n')
-        import resource
         import subprocess
         import sys
+        try:
+            import resource
+        except ImportError:   # Windows
+            resource = None
 
         def limite():   # 1 GiB: on the old code /dev/zero is read whole; in a child, so a FIFO cannot block the suite
-            resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+            try:
+                resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+            except (ValueError, OSError):   # macOS may refuse it: the fixed code does not need it
+                pass
         codice = ("import sys\nfrom pq_scitt import strict_json as sj\ntry:\n sj.load_jsonl(sys.argv[1])\n"
                   "except OSError as e:\n print('OSError', e.errno)")
-        for p in (fifo, "/dev/zero", d):
+        for p in speciali:
             try:
                 r = subprocess.run([sys.executable, "-B", "-c", codice, p], capture_output=True, text=True, timeout=30,
-                                   preexec_fn=limite)
+                                   preexec_fn=limite if resource else None)
             except subprocess.TimeoutExpired:
                 self.fail("load_jsonl(%r) blocked" % p)
-            self.assertEqual((r.returncode, r.stdout), (0, "OSError %d\n" % errno.EINVAL), (p, r.stderr[-200:]))
+            # a directory: EINVAL where it can be opened (Linux, macOS), EACCES where it cannot (Windows)
+            atteso = {errno.EINVAL} if p != d else {errno.EINVAL, errno.EACCES}
+            self.assertEqual(r.returncode, 0, (p, r.stderr[-200:]))
+            self.assertIn(r.stdout, {"OSError %d\n" % x for x in atteso}, (p, r.stdout, r.stderr[-200:]))
         with self.assertRaises(OSError) as c:
             sj.leggi_file(buono, 3)
         self.assertEqual(c.exception.errno, errno.EFBIG)
