@@ -71,7 +71,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import urllib.error
 import urllib.parse
@@ -136,6 +135,41 @@ _CKR_NAMES = {0x0: "CKR_OK", 0x5: "CKR_GENERAL_ERROR", 0x6: "CKR_FUNCTION_FAILED
 _CKA_CLASS, _CKA_KEY_TYPE, _CKA_LABEL = 0x0, 0x100, 0x3
 _CKA_SENSITIVE, _CKA_SIGN, _CKA_EXTRACTABLE = 0x103, 0x108, 0x162
 _CKO_PRIVATE_KEY, _CKK_EC_EDWARDS, _CKM_EDDSA = 3, 0x40, 0x1057
+_CKO_PUBLIC_KEY, _CKA_EC_PARAMS, _CKA_EC_POINT = 2, 0x180, 0x181
+# CKA_EC_PARAMS of an Ed25519 key: the OID 1.3.101.112 or the PrintableString "edwards25519" (PKCS#11 3.0 §2.3.10)
+_ED25519_PARAMS = (bytes.fromhex("06032b6570"), b"\x13\x0cedwards25519")
+
+
+def _ed25519_da_ec_point(punto: bytes, parametri: bytes) -> bytes:
+    """The 32 raw bytes of an Ed25519 public key from CKA_EC_POINT, closed: the parameters must name Ed25519; the
+    point is either the DER OCTET STRING of PKCS#11 2.40/3.0 (04 20 + 32 bytes) or the raw 32 bytes of PKCS#11 3.1.
+    Anything else = ValueError."""
+    if bytes(parametri) not in _ED25519_PARAMS:
+        raise ValueError("CKA_EC_PARAMS is not Ed25519 (%s)" % bytes(parametri)[:20].hex())
+    punto = bytes(punto)
+    if len(punto) == 34 and punto[:2] == b"\x04\x20":
+        return punto[2:]
+    if len(punto) == 32:
+        return punto
+    raise ValueError("CKA_EC_POINT of %d bytes is neither 04 20 + 32 bytes nor 32 raw bytes" % len(punto))
+
+
+def _p11_strutture():
+    """CK_ATTRIBUTE and CK_MECHANISM for ctypes. PKCS#11 2.40 §2.1 (pkcs11.h): on Windows the structures are packed to
+    1 byte (#pragma pack(1)); CK_ULONG is an unsigned long there too (32 bits on Windows, 64 on LP64 Unix)."""
+    import ctypes
+    ul = ctypes.c_ulong
+
+    class _Attr(ctypes.Structure):
+        if os.name == "nt":
+            _pack_ = 1
+        _fields_ = [("type", ul), ("pValue", ctypes.c_void_p), ("ulValueLen", ul)]
+
+    class _Mech(ctypes.Structure):
+        if os.name == "nt":
+            _pack_ = 1
+        _fields_ = [("mechanism", ul), ("pParameter", ctypes.c_void_p), ("ulParameterLen", ul)]
+    return _Attr, _Mech
 # One PKCS#11 call sequence at a time in this process: each signature runs C_Initialize ... C_Finalize with NULL init
 # args, i.e. without telling the module that several threads may call it at once. Without this lock two concurrent
 # sign() calls, or a sign() after a timed-out one whose thread is still inside the module, crashed the whole process
@@ -152,18 +186,7 @@ def _p11_sign_direct(module: str, token: str, label: str, pin: bytes, message: b
     key type EC_EDWARDS, CKA_SIGN true, CKA_SENSITIVE true and CKA_EXTRACTABLE false — anything else is refused."""
     import ctypes
     ul = ctypes.c_ulong
-
-    # PKCS#11 2.40 §2.1 (pkcs11.h): on Windows the structures are packed to 1 byte (#pragma pack(1)); CK_ULONG is an
-    # unsigned long there too (32 bits on Windows, 64 on LP64 Unix): c_ulong is right on both
-    class _Attr(ctypes.Structure):
-        if os.name == "nt":
-            _pack_ = 1
-        _fields_ = [("type", ul), ("pValue", ctypes.c_void_p), ("ulValueLen", ul)]
-
-    class _Mech(ctypes.Structure):
-        if os.name == "nt":
-            _pack_ = 1
-        _fields_ = [("mechanism", ul), ("pParameter", ctypes.c_void_p), ("ulParameterLen", ul)]
+    _Attr, _Mech = _p11_strutture()
 
     try:
         lib = ctypes.CDLL(module)
@@ -241,9 +264,90 @@ def _p11_sign_direct(module: str, token: str, label: str, pin: bytes, message: b
             lib.C_Finalize(None)
 
 
+def _p11_public_key(module: str, token: str, label: str) -> bytes:
+    """The Ed25519 public key labelled `label`, read through the module (ctypes, no login: a public object). Closed:
+    exactly one token with the label, exactly one public key with the label, key type EC_EDWARDS, Ed25519 parameters
+    and point (_ed25519_da_ec_point). 0.1.1: replaces `pkcs11-tool --read-object --type pubkey --output-file`, which
+    failed in CI run 45344690063 on Windows (an open NamedTemporaryFile cannot be opened by another process) and on
+    macOS (OpenSC of Homebrew refused the EC_POINT of SoftHSM2 of Homebrew)."""
+    import ctypes
+    ul = ctypes.c_ulong
+    _Attr, _ = _p11_strutture()
+    try:
+        lib = ctypes.CDLL(module)
+    except OSError as e:
+        raise RuntimeError(f"PKCS#11 module {module!r} cannot be loaded: {str(e)[:120]}") from None
+
+    def ck(rv, what):
+        if rv != 0:
+            raise RuntimeError(f"PKCS#11 {what} failed: rv=0x{rv:x} ({_CKR_NAMES.get(rv, 'see PKCS#11 spec')})")
+
+    for fn in ("C_Initialize", "C_Finalize", "C_GetSlotList", "C_GetTokenInfo", "C_OpenSession", "C_CloseSession",
+               "C_FindObjectsInit", "C_FindObjects", "C_FindObjectsFinal", "C_GetAttributeValue"):
+        getattr(lib, fn).restype = ul
+    if not _P11_LOCK.acquire(timeout=60):   # a timed-out signature may still be inside the module
+        raise RuntimeError("another PKCS#11 call of this process is still running (timed out?)")
+    try:
+        rv = lib.C_Initialize(None)
+        if rv not in (0, 0x191):
+            ck(rv, "C_Initialize")
+        own_init = rv == 0
+        session = ul(0)
+        try:
+            n = ul(0)
+            ck(lib.C_GetSlotList(ctypes.c_ubyte(1), None, ctypes.byref(n)), "C_GetSlotList")
+            slots = (ul * max(n.value, 1))()
+            ck(lib.C_GetSlotList(ctypes.c_ubyte(1), slots, ctypes.byref(n)), "C_GetSlotList")
+            found = []
+            for i in range(n.value):
+                info = ctypes.create_string_buffer(1024)   # CK_TOKEN_INFO: label is the first 32 bytes, space-padded
+                ck(lib.C_GetTokenInfo(ul(slots[i]), info), "C_GetTokenInfo")
+                if info.raw[:32].decode("utf-8", "replace").rstrip(" ") == token:
+                    found.append(slots[i])
+            if len(found) != 1:
+                raise RuntimeError(f"PKCS#11: {len(found)} tokens labelled {token!r} (exactly 1 required)")
+            ck(lib.C_OpenSession(ul(found[0]), ul(0x4), None, None, ctypes.byref(session)), "C_OpenSession")
+            cls_v, lab = ul(_CKO_PUBLIC_KEY), label.encode()
+            lab_buf = ctypes.create_string_buffer(lab, len(lab))
+            tmpl = (_Attr * 2)(_Attr(_CKA_CLASS, ctypes.cast(ctypes.byref(cls_v), ctypes.c_void_p), ctypes.sizeof(ul)),
+                               _Attr(_CKA_LABEL, ctypes.cast(lab_buf, ctypes.c_void_p), len(lab)))
+            ck(lib.C_FindObjectsInit(session, tmpl, ul(2)), "C_FindObjectsInit")
+            objs, cnt = (ul * 2)(), ul(0)
+            try:
+                ck(lib.C_FindObjects(session, objs, ul(2), ctypes.byref(cnt)), "C_FindObjects")
+            finally:
+                lib.C_FindObjectsFinal(session)
+            if cnt.value != 1:
+                raise RuntimeError(f"PKCS#11: {cnt.value} public keys labelled {label!r} on token {token!r} "
+                                   "(exactly 1 required)")
+            ktype = ul(0)
+            punto, parametri = ctypes.create_string_buffer(256), ctypes.create_string_buffer(64)
+            attrs = (_Attr * 3)(
+                _Attr(_CKA_KEY_TYPE, ctypes.cast(ctypes.byref(ktype), ctypes.c_void_p), ctypes.sizeof(ul)),
+                _Attr(_CKA_EC_POINT, ctypes.cast(punto, ctypes.c_void_p), len(punto)),
+                _Attr(_CKA_EC_PARAMS, ctypes.cast(parametri, ctypes.c_void_p), len(parametri)))
+            ck(lib.C_GetAttributeValue(session, ul(objs[0]), attrs, ul(3)), "C_GetAttributeValue")
+            if ktype.value != _CKK_EC_EDWARDS:
+                raise RuntimeError(f"PKCS#11: public key {label!r} is not an EC_EDWARDS key (type 0x{ktype.value:x})")
+            try:
+                pub = _ed25519_da_ec_point(punto.raw[:attrs[1].ulValueLen], parametri.raw[:attrs[2].ulValueLen])
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+                Ed25519PublicKey.from_public_bytes(pub)
+            except ValueError as e:
+                raise RuntimeError(f"pkcs11: public key {label!r} is not Ed25519: {e}") from None
+            return pub
+        finally:
+            if session.value:
+                lib.C_CloseSession(session)
+            if own_init:
+                lib.C_Finalize(None)
+    finally:
+        _P11_LOCK.release()
+
+
 class Pkcs11Backend:
-    """PKCS#11 token. Key generation and public-key read via OpenSC pkcs11-tool (subprocess); signing with a
-    single-part C_Sign through the module (ctypes, see _p11_sign_direct). The private key never enters this process."""
+    """PKCS#11 token. Key generation via OpenSC pkcs11-tool (subprocess); public-key read (0.1.1, _p11_public_key) and
+    signing with a single-part C_Sign through the module (ctypes, see _p11_sign_direct). The private key never enters this process."""
 
     name = "pkcs11"
 
@@ -307,15 +411,7 @@ class Pkcs11Backend:
         return self.public_key_hex()
 
     def public_key_hex(self) -> str:
-        with tempfile.NamedTemporaryFile(suffix=".spki") as t:
-            self._run(["--read-object", "--type", "pubkey",
-                       "--label", self._key, "--output-file", t.name], what="read public key")
-            with open(t.name, "rb") as f:
-                data = f.read()
-        try:
-            return _raw_from_spki(data).hex()
-        except (ValueError, TypeError) as e:   # binascii.Error is a ValueError
-            raise RuntimeError(f"pkcs11: public key {self._key!r} is not Ed25519: {e}") from None
+        return _p11_public_key(self._module, self._token, self._key).hex()
 
     def sign(self, message: bytes) -> bytes:
         import threading

@@ -314,7 +314,8 @@ class TestSoftHsmReale(_Comune):
         self._tre_livelli(self.uri("issuer").replace("token=kmsreali", "token=spento"), "spento")
 
     def test_m4_modulo_inesistente(self):
-        self._tre_livelli(self.uri("issuer").replace(MODULO, "/nessun/modulo.so"), "pkcs11-tool")
+        # 0.1.1: the public key is read through the module itself (not pkcs11-tool): the refusal names the module
+        self._tre_livelli(self.uri("issuer").replace(MODULO, "/nessun/modulo.so"), "cannot be loaded")
 
     def test_m4_timeout(self):
         self._tre_livelli(self.uri("issuer", timeout="0.001"), "timeout")

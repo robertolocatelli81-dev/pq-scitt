@@ -65,5 +65,21 @@ class TestNetHsmRispostaMalformata(unittest.TestCase):
                     with self.assertRaises(RuntimeError, msg=corpo):
                         f()
 
+class TestEcPointEd25519(unittest.TestCase):
+    def test_due_codifiche_e_rifiuti(self):
+        """CKA_EC_POINT of an Ed25519 key: DER OCTET STRING (PKCS#11 2.40/3.0, SoftHSM2 2.6.1) or 32 raw bytes
+        (PKCS#11 3.1); the parameters must name Ed25519 (OID or "edwards25519"). Anything else is refused."""
+        pub = bytes(range(32))
+        oid, nome = bytes.fromhex("06032b6570"), b"\x13\x0cedwards25519"
+        for p in (oid, nome):
+            self.assertEqual(k._ed25519_da_ec_point(b"\x04\x20" + pub, p), pub)
+            self.assertEqual(k._ed25519_da_ec_point(pub, p), pub)
+        for punto, p in ((b"\x04\x20" + pub, bytes.fromhex("06032b6571")),          # Ed448 OID
+                         (b"\x04\x21" + pub + b"\x00", oid), (pub[:31], oid), (b"\x04\x20" + pub[:31], oid),
+                         (b"\x05\x20" + pub, oid), (pub, b""), (pub + b"\x00", oid)):
+            with self.assertRaises(ValueError, msg=(punto.hex(), p.hex())):
+                k._ed25519_da_ec_point(punto, p)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
