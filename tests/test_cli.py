@@ -209,6 +209,7 @@ class TestCacciaInputSpeciali(unittest.TestCase):
                     r = self._cli(sub, nuovo())
                     self.assertEqual(r.returncode, 1)
                     self.assertIn(b'"verdict": "FAIL"', r.stdout)
+                    self.assertIn(b"not a regular file", r.stdout, sub)   # the reason, not another FAIL
                 r = self._cli("verify-ledger", buono, "--checkpoint", nuovo(), "--checkpoint-pubkey", "00" * 32)
                 self.assertEqual(r.returncode, 1)
                 self.assertIn(b"checkpoint unreadable", r.stdout)
@@ -252,7 +253,8 @@ class TestCacciaInputSpeciali(unittest.TestCase):
         d = tempfile.mkdtemp()
         self.addCleanup(__import__("shutil").rmtree, d, True)
         p = _registro(d)
-        for argv in (["--expect-hmac", "é", "--hmac-key", "k"], ["--expect-hmac", "aa", "--hmac-key", "\udcff"]):
+        for argv in (["--expect-hmac", "é", "--hmac-key", "k"], ["--expect-hmac", "aa", "--hmac-key", "\udcff"],
+                     ["--expect-hmac", "\udcff", "--hmac-key", "k"]):   # non-UTF-8 bytes as the expected HMAC
             rc, out, err = _esegui(["verify-ledger", p] + argv)
             self.assertEqual(rc, 1, argv)
             self.assertIn("tip HMAC does not match", out)

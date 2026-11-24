@@ -1972,6 +1972,15 @@ class TestSalePerRiga(unittest.TestCase):
                 h.write(righe)
             with self.assertRaises(sx.ExportError, msg=righe):
                 sx.leggi_sali(g)
+        # NEMESIS 24/11/2026: the salts file is bounded like the other inputs (it was read whole)
+        from unittest import mock
+        from pq_scitt import strict_json
+        with mock.patch.object(strict_json, "MAX_FILE", os.path.getsize(f) - 1):
+            with self.assertRaises(sx.ExportError) as c:
+                sx.leggi_sali(f)
+        self.assertIn("file larger than", str(c.exception))
+        with mock.patch.object(strict_json, "MAX_FILE", os.path.getsize(f)):
+            self.assertEqual(sx.leggi_sali(f), sali)                   # the bound itself is allowed
 
 
 def json_manifest(d):

@@ -772,7 +772,9 @@ def leggi_sali(percorso: str) -> List[bytes]:
         os.close(fd)
         raise ExportError("salts: not a regular file")
     with os.fdopen(fd, "rb") as f:
-        dati = f.read()
+        dati = f.read(strict_json.MAX_FILE + 1)
+    if len(dati) > strict_json.MAX_FILE:   # NEMESIS 24/11/2026: read whole, a large file was a MemoryError traceback
+        raise ExportError("salts: file larger than %d bytes" % strict_json.MAX_FILE)
     tutte = []
     try:
         for n, riga in enumerate(dati.splitlines(), 1):

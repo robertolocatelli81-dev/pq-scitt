@@ -8,11 +8,13 @@ system where the defect shows (the Windows and macOS ones were seen in the CI of
 - A FIFO given as input blocked forever, `/dev/zero` was read whole (MemoryError traceback) and a directory was a
   traceback, in `pq-scitt verify-ledger` (ledger and `--checkpoint`), `verify-ledger-standalone`, `export`,
   `verify --registro` and `kms … --backend file:`. Inputs are now regular files only, opened without blocking, at most
-  256 MiB (key files 64 KiB).
+  256 MiB (key files 64 KiB). The salts file (`verify --sali`, `export --sali-precedenti`) was already refused when
+  not a regular file, but was read whole (a 5 GiB file was a MemoryError traceback): same bound now.
 - `pq_scitt.strict_json`: the depth pre-scan was quadratic on an unterminated string (80 KB took 48 s on Python 3.12)
   and named the wrong reason (`troppo_profondo` instead of `non_json`).
 - `pq-scitt verify-ledger`, generic mode (ledgers without `idx`): cutting the head of a ledger, with no hash recomputed,
-  was PASS. Entry 0 must now start from the genesis.
+  was PASS. Entry 0 must now start from the genesis (64 zeros) or have no `prev` key; a ledger without `idx` whose
+  first entry names another genesis value is FAIL in this mode (it was PASS).
 - `pq-scitt verify-ledger`: `idx` true or 1.0 was accepted as 1.
 - `pq-scitt verify` and `export`: a refusal naming a non-UTF-8 path or argument raised UnicodeEncodeError in a UTF-8
   locale.
@@ -37,8 +39,11 @@ system where the defect shows (the Windows and macOS ones were seen in the CI of
   Homebrew's SoftHSM2 2.7.0); now it is read through the module (CKA_EC_POINT, closed: Ed25519 parameters, DER OCTET
   STRING or the 32 raw bytes of PKCS#11 3.1). The signature ran in a thread: at the time limit the caller stopped
   waiting, but a call hung in the module could not be stopped; now the public-key read and the signature run in a
-  child process that is killed at the limit, on every system. On Windows, `PQ_PKCS11_DLL_DIRS` lists extra folders
-  for the DLLs a module depends on.
+  child process that is killed at the limit, on every system. The child does not import from the current directory
+  (`python -c` would: a `json.py` there ran in the process that holds the PIN), answers on a private copy of standard
+  output (a module that prints on standard output cannot enter the protocol), and an answer out of form stops it; a
+  child that does not read its input is stopped at the limit too. On Windows, `PQ_PKCS11_DLL_DIRS` lists extra
+  folders for the DLLs a module depends on.
 
 Other changes:
 

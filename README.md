@@ -91,7 +91,8 @@ pip install --no-deps .
 SLH-DSA anchors need the optional `slh-dsa` package (`pip install '.[slh]'`, LGPL-3.0-or-later) or `liboqs-python`.
 Key files and the salts file of profile 2 `riservato` must be private to the running user: on POSIX owned by the user
 with no group or other permission bits; on Windows owned by the user (or by the token's default owner, Administrators
-for an elevated user) with DACL entries only for the user, SYSTEM and Administrators (`pq_scitt.filepriv`). On Windows
+for an elevated user) with access-allowed DACL entries only for the user, that owner, SYSTEM, Administrators and
+OWNER RIGHTS; an entry of another type, except access-denied, is refused (`pq_scitt.filepriv`). On Windows
 the salts file is created new (an existing path or link is refused, never followed) with a protected DACL for the
 user only. Any other system refuses both.
 

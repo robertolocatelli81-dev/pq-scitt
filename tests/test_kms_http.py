@@ -105,6 +105,68 @@ class TestLimiteDiTempoPkcs11(unittest.TestCase):
         self.assertIn("ended", str(c.exception))
 
 
+class TestFiglioPkcs11Chiuso(unittest.TestCase):
+    """NEMESIS 24/11/2026: the child process of the PKCS#11 calls."""
+
+    def test_non_importa_dalla_cartella_corrente(self):
+        """`python -c` puts the current directory first in sys.path: a json.py found there ran in the child, which
+        holds the PIN. The child answers from any folder, and the planted module is not run."""
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "json.py"), "w") as f:
+                f.write("open(%r, 'w').close()\nraise SystemExit(3)\n" % os.path.join(d, "ESEGUITO"))
+            r = subprocess.run(k._Pkcs11Figlio(5.0).comando, cwd=d, input=b'{"op": "x"}\n', capture_output=True,
+                               timeout=120)
+            self.assertFalse(os.path.exists(os.path.join(d, "ESEGUITO")), "the child ran json.py of the current folder")
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, b'{"err": "unknown request"}'), r.stderr[-300:])
+
+    def test_stdout_del_modulo_non_entra_nel_protocollo(self):
+        """A module that prints on descriptor 1 during a call: the child's answer is still the only line."""
+        import subprocess
+        codice = ("import os, sys; sys.path[:] = [p for p in sys.path if p != '']; sys.path.append(sys.argv[1]); "
+                  "import pq_scitt.kms as k; "
+                  "k._p11_public_key = lambda *a: (os.write(1, b'vendor debug line\\n'), b'\\x01' * 32)[1]; "
+                  "k._p11_lavoratore()")
+        r = subprocess.run([sys.executable, "-B", "-c", codice, k._Pkcs11Figlio(5.0).comando[-1]],
+                           input=b'{"op": "pub", "module": "m", "token": "t", "key": "k"}\n', capture_output=True,
+                           timeout=120)
+        self.assertEqual(r.stdout.splitlines(), [('{"ok": "%s"}' % ("01" * 32)).encode()], r.stderr[-300:])
+
+    def test_risposta_fuori_forma_ferma_il_figlio(self):
+        """Any answer that is not {"ok": hex} or {"err": text} = RuntimeError and the child is stopped: before, a
+        stray line was a JSONDecodeError/TypeError/KeyError and the next call read the answer of this one."""
+        for riga in ("vendor debug", "1", "[]", "{}", '{"ok": "zz"}', '{"ok": 5}', '{"err": 5}', '{"altro": "00"}',
+                     '{"ok": "00", "err": "x"}', '{"ok": "00", "altro": "x"}'):
+            f = k._Pkcs11Figlio(30.0)
+            f.comando = [sys.executable, "-c", "import sys, time; sys.stdin.readline(); print(sys.argv[1], flush=True); "
+                                               "print('{\"ok\": \"aa\"}', flush=True); time.sleep(600)", riga]
+            with self.assertRaises(RuntimeError, msg=riga) as c:
+                f.chiama({"op": "pub"}, "x")
+            self.assertIn("out of form", str(c.exception), riga)
+            self.assertIsNone(f._proc, riga)
+        # positive control: the two forms allowed
+        f = k._Pkcs11Figlio(30.0)
+        f.comando = [sys.executable, "-c", "import sys; sys.stdin.readline(); print('{\"err\": \"no\"}', flush=True); "
+                                           "sys.stdin.readline(); print('{\"ok\": \"aa\"}', flush=True)"]
+        with self.assertRaises(RuntimeError) as c:
+            f.chiama({"op": "pub"}, "x")
+        self.assertIn("pkcs11 x: no", str(c.exception))
+        self.assertEqual(f.chiama({"op": "pub"}, "x"), b"\xaa")
+
+    def test_figlio_che_non_legge_fermato_al_limite(self):
+        """A request larger than the pipe buffer to a child that does not read: the time limit holds (before, the
+        caller stayed in the write until the child ended)."""
+        import time
+        f = k._Pkcs11Figlio(1.0)
+        f.comando = [sys.executable, "-c", "import time; time.sleep(60)"]
+        t0 = time.monotonic()
+        with self.assertRaises(RuntimeError) as c:
+            f.chiama({"op": "sign", "msg": "00" * (1 << 20)}, "sign")
+        self.assertIn("timeout after 1.0 s", str(c.exception))
+        self.assertLess(time.monotonic() - t0, 15)
+
+
 class TestLayoutPkcs11(unittest.TestCase):
     def test_strutture_come_pkcs11_h(self):
         """CK_ATTRIBUTE and CK_MECHANISM as pkcs11.h lays them out: packed to 1 byte on Windows (CK_ULONG 4 bytes +

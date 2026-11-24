@@ -377,6 +377,11 @@ print("OK" if not cattivi else "BAD %r" % cattivi[:5])
             with self.assertRaises(RuntimeError, msg=etichetta) as c:
                 self.backend(etichetta).sign(b"x")
             self.assertIn(motivo, str(c.exception))
+        # NEMESIS 24/11/2026: the public-key read (0.1.1, through the module) refuses the same keys with its own reason
+        for etichetta, motivo in (("n2_p256", "not an EC_EDWARDS key"), ("n2_doppia", "2 public keys labelled")):
+            with self.assertRaises(RuntimeError, msg=etichetta) as c:
+                self.backend(etichetta).public_key_hex()
+            self.assertIn(motivo, str(c.exception))
         Ed25519PublicKey.from_public_bytes(bytes.fromhex(self.pub["altra"])).verify(
             self.backend("altra").sign(b"x"), b"x")   # positive control: the well-formed key signs
 

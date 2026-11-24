@@ -356,7 +356,12 @@ def _p11_public_key(module: str, token: str, label: str) -> bytes:
 def _p11_lavoratore() -> None:
     """The child process of _Pkcs11Figlio: one JSON request per line on stdin, one JSON answer per line on stdout.
     The PKCS#11 module runs here, so a call that hangs (or crashes the module) can be killed by the parent at its
-    time limit, on Linux, macOS and Windows alike. The PIN is read from this process's environment (inherited)."""
+    time limit, on Linux, macOS and Windows alike. The PIN is read from this process's environment (inherited).
+    The answers go to a private copy of standard output, and descriptor 1 is pointed at standard error: a module
+    that prints on standard output cannot put a line into the protocol (NEMESIS 24/11/2026: one line printed by the
+    module made every call fail, and through the API a later call got the answer of the one before)."""
+    uscita = os.fdopen(os.dup(1), "w", encoding="ascii")
+    os.dup2(2, 1)
     for riga in sys.stdin.buffer:
         try:
             r = json.loads(riga)
@@ -372,8 +377,8 @@ def _p11_lavoratore() -> None:
             risposta = {"ok": out.hex()}
         except Exception as e:  # noqa: BLE001 — carried to the parent as one readable error
             risposta = {"err": str(e)[:300] if isinstance(e, RuntimeError) else f"{type(e).__name__}: {str(e)[:200]}"}
-        sys.stdout.write(json.dumps(risposta) + "\n")
-        sys.stdout.flush()
+        uscita.write(json.dumps(risposta) + "\n")
+        uscita.flush()
 
 
 class _Pkcs11Figlio:
@@ -387,7 +392,13 @@ class _Pkcs11Figlio:
         self._timeout, self._proc, self._righe = timeout, None, None
         self._lock = threading.Lock()
         self._scatola = [None]                       # the live child, killed when this object goes away
-        self.comando = [sys.executable, "-B", "-c", "from pq_scitt.kms import _p11_lavoratore; _p11_lavoratore()"]
+        # `python -c` puts the current directory first in sys.path: the child (which holds the PIN) would import a
+        # json.py or a pq_scitt/ found there (NEMESIS 24/11/2026). It is removed; the folder this package was
+        # loaded from goes last, so that the child finds the same package as its parent.
+        self.comando = [sys.executable, "-B", "-c",
+                        "import sys; sys.path[:] = [p for p in sys.path if p != '']; sys.path.append(sys.argv[1]); "
+                        "from pq_scitt.kms import _p11_lavoratore; _p11_lavoratore()",
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
         weakref.finalize(self, _Pkcs11Figlio._uccidi, self._scatola)
 
     @staticmethod
@@ -428,14 +439,19 @@ class _Pkcs11Figlio:
         try:
             if self._proc is None or self._proc.poll() is not None:
                 self._avvia()
+            dati, tubo = (json.dumps(richiesta) + "\n").encode(), self._proc.stdin
+
+            def scrivi():   # in a thread: a child that does not read its input must not hold the caller past the limit
+                try:
+                    tubo.write(dati)
+                    tubo.flush()
+                except (OSError, ValueError):
+                    pass    # the child ended or was killed: the reader says so (None)
+            threading.Thread(target=scrivi, daemon=True).start()
             try:
-                self._proc.stdin.write((json.dumps(richiesta) + "\n").encode())
-                self._proc.stdin.flush()
                 riga = self._righe.get(timeout=max(0.0, fine - time.monotonic()))
             except queue.Empty:
                 riga = "timeout"
-            except OSError:
-                riga = None
             if riga == "timeout" or riga is None:
                 rc = self._proc.poll()
                 _Pkcs11Figlio._uccidi([self._proc])
@@ -443,10 +459,17 @@ class _Pkcs11Figlio:
                 if riga == "timeout":
                     raise RuntimeError(f"pkcs11 {cosa}: timeout after {self._timeout} s (the call was stopped)")
                 raise RuntimeError(f"pkcs11 {cosa}: the PKCS#11 process ended (rc {rc})")
-            r = json.loads(riga)
-            if "err" in r:
-                raise RuntimeError(f"pkcs11 {cosa}: {r['err']}")
-            return bytes.fromhex(r["ok"])
+            try:   # closed: one object, {"ok": hex} or {"err": text}; anything else stops the child (the next
+                r = json.loads(riga)   # line would be the answer to this call, read by the next one)
+                if type(r) is not dict or len(r) != 1 or type(next(iter(r.values()))) is not str:
+                    raise ValueError
+                if "err" not in r:
+                    return bytes.fromhex(r["ok"])
+            except (ValueError, KeyError):
+                _Pkcs11Figlio._uccidi([self._proc])
+                self._proc = None
+                raise RuntimeError(f"pkcs11 {cosa}: answer out of form from the PKCS#11 process (stopped)") from None
+            raise RuntimeError(f"pkcs11 {cosa}: {r['err']}")
         finally:
             self._lock.release()
 

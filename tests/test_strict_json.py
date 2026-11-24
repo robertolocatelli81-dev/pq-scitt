@@ -61,6 +61,15 @@ class TestStrictJSON(unittest.TestCase):
             with self.subTest(dati=dati):
                 self._rifiuta(dati, motivo)
 
+    def test_surrogato_a_ogni_livello(self):
+        """NEMESIS 24/11/2026: a lone surrogate is refused wherever it is: member name, member value, list item,
+        nested; written as an escape (bytes or str) or as the character itself in a str."""
+        for dati in (b'{"a": "\\ud800"}', b'{"\\udfff": 1}', b'["x", "\\ud800"]', b'{"a": [{"b": ["x\\udc00y"]}]}',
+                     b'[{"\\ud800": 1}]', '{"a": "\\ud800"}', '"\ud800"', '{"a": ["\udcff"]}', '{"\udc80": 1}'):
+            with self.subTest(dati=dati):
+                self._rifiuta(dati, "surrogato_solitario")
+        self.assertEqual(sj.loads(b'{"a": ["\\ud83d\\ude00"]}'), {"a": ["\U0001F600"]})   # positive control: a pair
+
     def test_depth_limit_exact(self):
         self.assertEqual(sj.loads("[" * 128 + "]" * 128), sj.loads("[" * 128 + "]" * 128))
         self._rifiuta("[" * 129 + "]" * 129, "troppo_profondo")
@@ -132,6 +141,18 @@ class TestCaccia20261124(unittest.TestCase):
         with self.assertRaises(OSError) as c:
             sj.leggi_file(buono, 3)
         self.assertEqual(c.exception.errno, errno.EFBIG)
+        n = os.path.getsize(buono)                        # NEMESIS 24/11/2026: the bound is exact
+        self.assertEqual(len(sj.leggi_file(buono, n)), n)
+        with self.assertRaises(OSError) as c:
+            sj.leggi_file(buono, n - 1)
+        self.assertEqual(c.exception.errno, errno.EFBIG)
+        if resource:   # the file is not read whole before the refusal: 3 GiB (sparse) under 1 GiB of address space
+            grande = os.path.join(d, "grande")
+            with open(grande, "wb") as f:
+                f.truncate(3 << 30)
+            r = subprocess.run([sys.executable, "-B", "-c", codice, grande], capture_output=True, text=True, timeout=120,
+                               preexec_fn=limite)
+            self.assertEqual((r.returncode, r.stdout), (0, "OSError %d\n" % errno.EFBIG), r.stderr[-200:])
         self.assertEqual(sj.load_jsonl(buono), [{"a": 1}, {"b": 2}])   # positive control
 
 class TestPercorsiDispositivoWindows(unittest.TestCase):
