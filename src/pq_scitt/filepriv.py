@@ -10,8 +10,9 @@ The rule is the same on both systems; the means differ:
     an entry for anyone else, or an entry of another type = refused;
   - not a link. POSIX: O_NOFOLLOW. Windows: os.lstat before opening (a symbolic link or another reparse point is
     refused) and the same file identity (st_dev, st_ino) on the open descriptor;
-  - a new private file (salts). POSIX: O_EXCL with mode 0600. Windows: O_EXCL, then a protected DACL with one entry,
-    the user, before anything is written.
+  - a new private file (salts). POSIX: O_EXCL|O_NOFOLLOW with mode 0600. Windows: CreateFileW CREATE_NEW with
+    FILE_FLAG_OPEN_REPARSE_POINT (an existing link is never followed) and a protected DACL with one entry, the user,
+    given at creation.
 Any other system (neither POSIX nor Windows) = refused with the reason. Standard library only (ctypes on Windows).
 """
 from __future__ import annotations
@@ -64,9 +65,15 @@ def _win():
     a.InitializeAcl.restype = wintypes.BOOL
     a.AddAccessAllowedAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
     a.AddAccessAllowedAce.restype = wintypes.BOOL
-    a.SetNamedSecurityInfoW.argtypes = [wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p,
-                                        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
-    a.SetNamedSecurityInfoW.restype = wintypes.DWORD
+    a.InitializeSecurityDescriptor.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    a.InitializeSecurityDescriptor.restype = wintypes.BOOL
+    a.SetSecurityDescriptorDacl.argtypes = [ctypes.c_void_p, wintypes.BOOL, ctypes.c_void_p, wintypes.BOOL]
+    a.SetSecurityDescriptorDacl.restype = wintypes.BOOL
+    a.SetSecurityDescriptorControl.argtypes = [ctypes.c_void_p, wintypes.WORD, wintypes.WORD]
+    a.SetSecurityDescriptorControl.restype = wintypes.BOOL
+    k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+                              wintypes.DWORD, wintypes.HANDLE]
+    k.CreateFileW.restype = wintypes.HANDLE
     k.GetCurrentProcess.restype = wintypes.HANDLE
     k.CloseHandle.argtypes = [wintypes.HANDLE]
     k.LocalFree.argtypes = [ctypes.c_void_p]
@@ -149,7 +156,12 @@ def _problema_windows(fd: int) -> Optional[str]:
         k.LocalFree(sd)
 
 
-def _privatizza_windows(percorso: str) -> None:
+def _crea_windows(percorso: str) -> int:
+    """CreateFileW with CREATE_NEW and FILE_FLAG_OPEN_REPARSE_POINT: an existing path, a symbolic link included (even
+    one whose target does not exist), is FileExistsError, never followed; the file is born with a protected DACL with
+    one entry, the user (no name-based change afterwards). 0.1.1: os.open(O_CREAT|O_EXCL) followed a dangling link on
+    Windows and created its target (CI run 45341103851)."""
+    import msvcrt
     sid, (ctypes, wintypes, a, k), buf, psid = _sid_del_token(1)
     lunghezza = 8 + 8 + a.GetLengthSid(psid)          # ACL header + ACCESS_ALLOWED_ACE without SidStart + the SID
     acl = ctypes.create_string_buffer((lunghezza + 3) & ~3)
@@ -157,9 +169,56 @@ def _privatizza_windows(percorso: str) -> None:
         raise OSError(ctypes.get_last_error(), "InitializeAcl")
     if not a.AddAccessAllowedAce(acl, 2, 0x1F01FF, psid):   # FILE_ALL_ACCESS for the user only
         raise OSError(ctypes.get_last_error(), "AddAccessAllowedAce")
-    err = a.SetNamedSecurityInfoW(percorso, 1, 0x4 | 0x80000000, None, None, acl, None)   # DACL | PROTECTED_DACL
+    sd = ctypes.create_string_buffer(64)                # SECURITY_DESCRIPTOR_MIN_LENGTH is 40 on 64-bit
+    if not a.InitializeSecurityDescriptor(sd, 1):
+        raise OSError(ctypes.get_last_error(), "InitializeSecurityDescriptor")
+    if not a.SetSecurityDescriptorDacl(sd, True, acl, False):
+        raise OSError(ctypes.get_last_error(), "SetSecurityDescriptorDacl")
+    if not a.SetSecurityDescriptorControl(sd, 0x1000, 0x1000):   # SE_DACL_PROTECTED: nothing inherited
+        raise OSError(ctypes.get_last_error(), "SetSecurityDescriptorControl")
+
+    class SECURITY_ATTRIBUTES(ctypes.Structure):
+        _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p),
+                    ("bInheritHandle", wintypes.BOOL)]
+    sa = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), ctypes.cast(sd, ctypes.c_void_p), False)
+    h = k.CreateFileW(percorso, 0x40000000 | 0x20000, 0, ctypes.byref(sa),   # GENERIC_WRITE | READ_CONTROL
+                      1, 0x80 | 0x00200000, None)        # CREATE_NEW; NORMAL | FILE_FLAG_OPEN_REPARSE_POINT
+    if h is None or h == ctypes.c_void_p(-1).value:
+        err = ctypes.get_last_error()
+        if err in (80, 183):                             # ERROR_FILE_EXISTS, ERROR_ALREADY_EXISTS
+            raise FileExistsError(17, "the path exists (a link included): the file must be new", percorso)
+        raise OSError(err, "CreateFileW", percorso)
+    try:
+        return msvcrt.open_osfhandle(h, os.O_WRONLY | getattr(os, "O_BINARY", 0))
+    except BaseException:
+        k.CloseHandle(h)
+        raise
+
+
+def descrivi(fd: int) -> dict:
+    """Windows diagnostics: owner SID and every DACL entry (type, flags, mask, SID) as filepriv reads them."""
+    import msvcrt
+    ctypes, wintypes, a, k = _win()
+    owner, dacl, sd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    err = a.GetSecurityInfo(msvcrt.get_osfhandle(fd), 1, 0x1 | 0x4, ctypes.byref(owner), None, ctypes.byref(dacl),
+                            None, ctypes.byref(sd))
     if err:
-        raise OSError(err, "SetNamedSecurityInfoW")
+        raise OSError(err, "GetSecurityInfo")
+    try:
+        voci = []
+        n = ctypes.cast(dacl, ctypes.POINTER(ctypes.c_uint16))[2] if dacl.value else 0
+        for i in range(n):
+            ace = ctypes.c_void_p()
+            if not a.GetAce(dacl, i, ctypes.byref(ace)):
+                raise OSError(ctypes.get_last_error(), "GetAce")
+            tipo, flag = ctypes.cast(ace, ctypes.POINTER(ctypes.c_ubyte))[0:2]
+            maschera = ctypes.cast(ace.value + 4, ctypes.POINTER(ctypes.c_uint32))[0]
+            sid = _sid_testo(ctypes, wintypes, a, k, ace.value + 8) if tipo in (0, 1) else "?"
+            voci.append({"tipo": tipo, "flag": flag, "maschera": "0x%08x" % maschera, "sid": sid})
+        return {"proprietario": _sid_testo(ctypes, wintypes, a, k, owner), "dacl": voci if dacl.value else None,
+                "utente": sorted(utente())}
+    finally:
+        k.LocalFree(sd)
 
 
 # ------------------------------------------------------------------ API
@@ -207,9 +266,8 @@ def crea_privato(percorso: str) -> int:
         return os.open(percorso, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     if not WINDOWS:
         raise NonPrivato("this system has neither POSIX nor Windows file ownership")
-    fd = os.open(percorso, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    fd = _crea_windows(percorso)
     try:
-        _privatizza_windows(percorso)
         motivo = _problema_windows(fd)
         if motivo:
             raise NonPrivato(motivo)
@@ -221,4 +279,3 @@ def crea_privato(percorso: str) -> int:
             pass
         raise
     return fd
-

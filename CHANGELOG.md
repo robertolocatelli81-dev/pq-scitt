@@ -20,7 +20,10 @@ Defects of 0.1.0, all present since the initial import (4bf24e9), each with a te
 - `pq_scitt.kms`: a malformed NetHSM answer was a KeyError traceback.
 - `pq-scitt export` on Windows (no `O_NOFOLLOW`, no `geteuid`): `file:` keys and the salts file were an AttributeError
   traceback. New `pq_scitt.filepriv`: the same rule with the Windows means (owner SID and DACL; no reparse point;
-  the salts file gets a protected DACL for the user only). Another system refuses with the reason.
+  the salts file is created with CreateFileW, CREATE_NEW and FILE_FLAG_OPEN_REPARSE_POINT, born with a protected
+  DACL for the user only). Another system refuses with the reason. Found by the CI run 45341103851 before release:
+  creating it with os.open(O_CREAT|O_EXCL) on Windows followed a dangling link at the salts path and created the
+  link's target.
 - Windows: a directory given as input was a PermissionError; now "not a regular file", as on POSIX. A device path
   (`\\.\pipe\…`) is refused by its name, never opened (opening would connect to a named pipe).
 - `verify-ledger --out` writes the receipt as UTF-8 with LF on every system (Windows wrote CRLF).

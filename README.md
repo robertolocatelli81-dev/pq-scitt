@@ -50,7 +50,7 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
   commits 4bf24e9 and 9692a74). The tests of the `chain` event format use
   events produced by the original implementation of that format, frozen in `tests/data/chain_events.json`.
 - **Tests of version 0.1.1**, measured on 2026-11-24 on Linux x86-64 against the installed package (dependencies from
-  `requirements/ci.txt`): Python 3.11.2, 3.12.15 and 3.14.8, each 256 run, 0 failed, plus `test_verify_ledger.py` 3/3;
+  `requirements/ci.txt`): Python 3.11.2, 3.12.15 and 3.14.8, each 257 run, 0 failed, plus `test_verify_ledger.py` 3/3;
   9 skipped with `slh-dsa` (8 Vault tests: the Vault image was not available to the measuring user; 1 needs
   `liboqs-python`), 20 skipped without it. The CI (`.github/workflows/ci.yml`) runs Linux with Python 3.10 to 3.14 and
   macOS and Windows with 3.13, each with and without `slh-dsa`. On Windows the tests use the system's own means: named
@@ -84,7 +84,8 @@ SLH-DSA anchors need the optional `slh-dsa` package (`pip install '.[slh]'`, LGP
 Key files and the salts file of profile 2 `riservato` must be private to the running user: on POSIX owned by the user
 with no group or other permission bits; on Windows owned by the user (or by the token's default owner, Administrators
 for an elevated user) with DACL entries only for the user, SYSTEM and Administrators (`pq_scitt.filepriv`). On Windows
-the salts file is created with a protected DACL for the user only. Any other system refuses both.
+the salts file is created new (an existing path or link is refused, never followed) with a protected DACL for the
+user only. Any other system refuses both.
 
 ## Example (5 commands)
 

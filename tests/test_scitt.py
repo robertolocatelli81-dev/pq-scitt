@@ -674,7 +674,10 @@ class TestRevisioneP1P2(unittest.TestCase):
             p = os.path.join(d, "ts_000003.cose")
             if tipo == "illeggibile" and os.name == "nt":
                 import subprocess
-                subprocess.run(["icacls", p, "/deny", "*S-1-1-0:(R)"], check=True, capture_output=True)
+                # deny READ DATA only: (R) also denied READ_CONTROL, and then nobody could read or undo the DACL
+                # (icacls /remove:d exited 5 in CI run 45341103851); the cleanup runs even if the test fails
+                subprocess.run(["icacls", p, "/deny", "*S-1-1-0:(RD)"], check=True, capture_output=True)
+                self.addCleanup(subprocess.run, ["icacls", p, "/remove:d", "*S-1-1-0"], capture_output=True)
             elif tipo == "illeggibile":
                 os.chmod(p, 0)
                 if os.access(p, os.R_OK):
@@ -690,7 +693,8 @@ class TestRevisioneP1P2(unittest.TestCase):
             e = esiti[0]
             self.assertEqual((e.ok, e.motivo), (False, "forma_cose"), tipo)
             if tipo == "illeggibile" and os.name == "nt":
-                subprocess.run(["icacls", p, "/remove:d", "*S-1-1-0"], check=True, capture_output=True)
+                r = subprocess.run(["icacls", p, "/remove:d", "*S-1-1-0"], capture_output=True)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
             elif tipo == "illeggibile":
                 os.chmod(p, 0o600)
 
@@ -2683,12 +2687,38 @@ class TestFilePrivati(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.d, True)
 
+    def _diagnosi(self, quando, p):
+        """Windows: print what filepriv reads (owner, DACL entries with type, flags, mask, SID) into the CI log."""
+        if os.name != "nt":
+            return
+        fd = os.open(p, os.O_RDONLY | os.O_BINARY)
+        try:
+            sys.stderr.write("\n[filepriv] %s: %r\n" % (quando, filepriv.descrivi(fd)))
+        finally:
+            os.close(fd)
+
+    def test_link_pendente_mai_seguito(self):
+        """A link at the salts path whose target does not exist: refused, the target is not created (Windows: os.open
+        O_CREAT|O_EXCL followed the link and created it, CI run 45341103851; POSIX: O_NOFOLLOW)."""
+        if not FILE_PRIVATI:
+            self.skipTest("this system has neither POSIX nor Windows file ownership")
+        link, bersaglio = os.path.join(self.d, "link"), os.path.join(self.d, "bersaglio")
+        _link(self, bersaglio, link)
+        with self.assertRaises(sx.ExportError) as c:
+            sx.scrivi_sali([b"\x00" * 32], link)
+        self.assertIn("must be new", str(c.exception))
+        self.assertFalse(os.path.exists(bersaglio))
+        sx.scrivi_sali([b"\x00" * 32], os.path.join(self.d, "nuovo"))     # positive control: a new path is written
+        self.assertTrue(_privato(os.path.join(self.d, "nuovo")))
+
     @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership")
     def test_privato_e_poi_aperto_ad_altri(self):
         p = os.path.join(self.d, "sali")
         sx.scrivi_sali([b"\x00" * 32], p)
+        self._diagnosi("salts file as created", p)
         self.assertTrue(_privato(p))                                       # positive control
         _allarga(p)
+        self._diagnosi("after a read entry for Everyone", p)
         fd = os.open(p, os.O_RDONLY | getattr(os, "O_BINARY", 0))
         try:
             motivo = filepriv.problema(fd, os.fstat(fd))
