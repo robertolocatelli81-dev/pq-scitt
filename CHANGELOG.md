@@ -50,10 +50,13 @@ Build and CI:
   supersedes the Dependabot pull request #1, which could not pass `check_tree.py`.
 - CI on every branch: Linux with Python 3.10 to 3.14, macOS and Windows with 3.13, each with and without `slh-dsa`; the
   log lists every skip with its reason, and a skip for a missing POSIX `sh` fails the job.
-- `tests/test_kms_reali.py` runs in the CI: SoftHSM2 and OpenSC on Linux and macOS, OpenBao 2.7.3 (MPL-2.0, pinned by
-  digest) in docker on Linux. HashiCorp Vault is BUSL-1.1 since 1.15 (its LICENSE, read on 2026-11-24): the tests use
-  OpenBao, whose Transit API is the same (`PQ_VAULT_IMAGE` can still name a Vault image). `PQ_REQUIRE_KMS` turns a
-  missing required service into a failure, with a positive control in the CI and in `TestRequisitoKms`.
+- `tests/test_kms_reali.py` runs in the CI on Linux, macOS and Windows: SoftHSM2 + OpenSC (Ubuntu packages pinned;
+  Homebrew; on Windows SoftHSM2 built from the 2.7.0 commit with vcpkg OpenSSL and cached, and the OpenSC 0.27.1 MSI)
+  and the official OpenBao 2.7.3 binary run natively (sha256 from its checksums.txt, whose GPG signature was checked on
+  2026-11-24). HashiCorp Vault is BUSL-1.1 since 1.15 (its LICENSE, read on 2026-11-24): the tests use OpenBao, whose
+  Transit API is the same. `PQ_REQUIRE_KMS` turns a missing required service into a failure, with a positive control
+  in the CI and in `TestRequisitoKms`.
+- `pq_scitt.kms`: the PKCS#11 structures passed by ctypes are packed to 1 byte on Windows, as pkcs11.h requires there.
 
 ## 0.1.0 (initial import 2026-11-08, GitHub release 2026-11-12)
 

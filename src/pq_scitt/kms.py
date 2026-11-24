@@ -145,7 +145,7 @@ _P11_LOCK = threading.Lock()
 
 
 def _p11_sign_direct(module: str, token: str, label: str, pin: bytes, message: bytes) -> bytes:
-    """Single-part C_Sign with CKM_EDDSA through the PKCS#11 module itself (ctypes, stdlib; Linux/Unix LP64 ABI).
+    """Single-part C_Sign with CKM_EDDSA through the PKCS#11 module itself (ctypes, stdlib; LP64 Unix and Windows).
     Why not pkcs11-tool: OpenSC 0.23 signs inputs over 1024 bytes with C_SignUpdate, and EdDSA is single-part only:
     SoftHSM2 2.6.1 answers CKR_OPERATION_NOT_INITIALIZED (measured 08/11/2026: 1024 bytes ok, 1025 refused; a SCITT
     Sig_structure is ~1 KB or more). Closed: exactly one token with the label, exactly one private key with the label,
@@ -153,10 +153,16 @@ def _p11_sign_direct(module: str, token: str, label: str, pin: bytes, message: b
     import ctypes
     ul = ctypes.c_ulong
 
+    # PKCS#11 2.40 §2.1 (pkcs11.h): on Windows the structures are packed to 1 byte (#pragma pack(1)); CK_ULONG is an
+    # unsigned long there too (32 bits on Windows, 64 on LP64 Unix): c_ulong is right on both
     class _Attr(ctypes.Structure):
+        if os.name == "nt":
+            _pack_ = 1
         _fields_ = [("type", ul), ("pValue", ctypes.c_void_p), ("ulValueLen", ul)]
 
     class _Mech(ctypes.Structure):
+        if os.name == "nt":
+            _pack_ = 1
         _fields_ = [("mechanism", ul), ("pParameter", ctypes.c_void_p), ("ulParameterLen", ul)]
 
     try:

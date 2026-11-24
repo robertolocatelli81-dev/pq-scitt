@@ -53,7 +53,10 @@ def _contenitore_c_e():
     return subprocess.run([CONTENITORE, "image", "inspect", IMMAGINE], capture_output=True).returncode == 0
 
 
-PODMAN_C_E = _contenitore_c_e()
+# 0.1.1: the official OpenBao binary run natively (`bao server -dev`), the same on Linux, macOS and Windows; the
+# container only where no binary is given. PQ_BAO_BIN names the binary, otherwise `bao` on PATH.
+BAO = os.environ.get("PQ_BAO_BIN") or shutil.which("bao")
+PODMAN_C_E = bool(BAO and os.path.isfile(BAO)) or _contenitore_c_e()
 # PQ_REQUIRE_KMS: the services that must run here ("hsm", "vault", or "1" for both). A required service that is
 # missing makes the class FAIL with the reason, never skip (the CI sets it where it installs them).
 RICHIESTI = set(os.environ.get("PQ_REQUIRE_KMS", "").replace(",", " ").split())
@@ -451,7 +454,8 @@ print("OK" if not cattivi else "BAD %r" % cattivi[:5])
 
 # ------------------------------------------------------------------------------------------------ Vault
 
-@_servizio("vault", PODMAN_C_E, "%s or image %s missing" % (CONTENITORE, IMMAGINE))
+@_servizio("vault", PODMAN_C_E, "no OpenBao binary (PQ_BAO_BIN or bao on PATH) and no %s with image %s"
+           % (CONTENITORE, IMMAGINE))
 class TestVaultReale(_Comune):
     @classmethod
     def setUpClass(cls):
@@ -462,12 +466,24 @@ class TestVaultReale(_Comune):
         cls.porta = _porta_libera()
         cls.nome = "kmsreali-vault-" + secrets.token_hex(4)
         cls.url = "http://127.0.0.1:%d" % cls.porta
-        r = subprocess.run([CONTENITORE, "run", "-d", "--rm", "--name", cls.nome, "-p", "127.0.0.1:%d:8200" % cls.porta,
-                            "-e", "VAULT_DEV_ROOT_TOKEN_ID", "-e", "VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200",
-                            "-e", "BAO_DEV_ROOT_TOKEN_ID", "-e", "BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200",
-                            "-e", "SKIP_SETCAP=1", IMMAGINE, "server", "-dev"],
-                           env=dict(os.environ, **cls.ENV), capture_output=True, timeout=120)
-        if r.returncode:
+        cls.processo = None
+        if BAO and os.path.isfile(BAO):
+            # native: token and address through the environment (never on argv); -dev-no-store-token: nothing is
+            # written into the user's home; the log stays in the temporary folder
+            cls.log = open(os.path.join(cls.tmp, "bao.log"), "wb")
+            cls.processo = subprocess.Popen(
+                [BAO, "server", "-dev", "-dev-no-store-token"], stdout=cls.log, stderr=subprocess.STDOUT,
+                env=dict(os.environ, BAO_DEV_ROOT_TOKEN_ID=cls.TOKEN,
+                         BAO_DEV_LISTEN_ADDRESS="127.0.0.1:%d" % cls.porta))
+            r = None
+        else:
+            r = subprocess.run([CONTENITORE, "run", "-d", "--rm", "--name", cls.nome,
+                                "-p", "127.0.0.1:%d:8200" % cls.porta,
+                                "-e", "VAULT_DEV_ROOT_TOKEN_ID", "-e", "VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200",
+                                "-e", "BAO_DEV_ROOT_TOKEN_ID", "-e", "BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200",
+                                "-e", "SKIP_SETCAP=1", IMMAGINE, "server", "-dev"],
+                               env=dict(os.environ, **cls.ENV), capture_output=True, timeout=120)
+        if r is not None and r.returncode:
             raise RuntimeError("%s run failed: %s" % (CONTENITORE, r.stderr[-300:]))
         fine = time.time() + 90
         while True:
@@ -492,8 +508,17 @@ class TestVaultReale(_Comune):
     def tearDownClass(cls):
         if getattr(cls, "_env_patch", None):
             cls._env_patch.stop()
-        subprocess.run([CONTENITORE, "stop", "-t", "2", cls.nome], capture_output=True, timeout=120)
-        subprocess.run([CONTENITORE, "rm", "-f", cls.nome], capture_output=True, timeout=120)
+        if getattr(cls, "processo", None) is not None:
+            cls.processo.terminate()
+            try:
+                cls.processo.wait(30)
+            except subprocess.TimeoutExpired:
+                cls.processo.kill()
+                cls.processo.wait(30)
+            cls.log.close()
+        else:
+            subprocess.run([CONTENITORE, "stop", "-t", "2", cls.nome], capture_output=True, timeout=120)
+            subprocess.run([CONTENITORE, "rm", "-f", cls.nome], capture_output=True, timeout=120)
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     @classmethod

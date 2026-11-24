@@ -38,25 +38,95 @@ jobs:
         run: |
           python -m pip uninstall -y slh-dsa
           python -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("slhdsa") is not None)'
-      # Real KMS backends for tests/test_kms_reali.py (0.1.1): they run, never skip, where installed (PQ_REQUIRE_KMS).
-      # Linux: SoftHSM2 + OpenSC (Ubuntu packages) and OpenBao (MPL-2.0; HashiCorp Vault is BUSL-1.1 since 1.15) in
-      # docker, pinned by digest. macOS: SoftHSM2 + OpenSC from Homebrew; no container runtime on the macOS runners.
-      # Windows: no SoftHSM2 build from its project (opendnssec/SoftHSMv2 publishes sources only; the one binary
-      # build, disig/SoftHSM2-for-Windows, is 2.5.0 of 2018) and the runner's docker runs Windows containers only.
-      - name: Install SoftHSM2, OpenSC and the OpenBao image (Linux)
+      # Real KMS backends for tests/test_kms_reali.py (0.1.1): installed on every runner, and there they must run
+      # (PQ_REQUIRE_KMS=1: a missing service fails the job). Transit server: the official OpenBao 2.7.3 binary
+      # (MPL-2.0; HashiCorp Vault is BUSL-1.1 since 1.15), run natively on the three systems, sha256 pinned from
+      # its checksums.txt, whose GPG signature (key 66D1 5FDD 8728 7219 C8E1 5478 D200 CD70 2853 E6D0) was checked
+      # on 2026-11-24. HSM: SoftHSM2 + OpenSC pkcs11-tool; Ubuntu packages (pinned), Homebrew (not pinnable, version
+      # printed), Windows built from the SoftHSMv2 2.7.0 commit (no Windows binary from the project) + OpenSC MSI.
+      - name: OpenBao 2.7.3 (official binary, sha256 checked)
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux)   a=openbao_2.7.3_linux_amd64.tar.gz;  h=131df9a21cf3dd2dff47107110b369c9974cbdaa482bcbc723b81b3403c68ecd ;;
+            macOS)   a=openbao_2.7.3_darwin_arm64.tar.gz; h=1189f85499b36c0134e8e6bf0bffe71dfe1b085ab5d223324a5bccc2a59d62f7 ;;
+            Windows) a=openbao_2.7.3_windows_amd64.zip;   h=969e4872b21eeee7c9b4cd312e77027e624528ca7bc9dc2361311b97e34e6e90 ;;
+          esac
+          curl -sSfL -o "$RUNNER_TEMP/$a" "https://github.com/openbao/openbao/releases/download/v2.7.3/$a"
+          python - "$RUNNER_TEMP/$a" "$h" "$RUNNER_TEMP/bao" <<'PY'
+          import hashlib, os, sys, tarfile, zipfile
+          f, h, d = sys.argv[1:]
+          got = hashlib.sha256(open(f, "rb").read()).hexdigest()
+          if got != h:
+              sys.exit("sha256 of %s: %s, expected %s" % (f, got, h))
+          os.makedirs(d, exist_ok=True)
+          nome = "bao.exe" if f.endswith(".zip") else "bao"
+          if f.endswith(".zip"):
+              with zipfile.ZipFile(f) as z:
+                  open(os.path.join(d, nome), "wb").write(z.read(nome))
+          else:
+              with tarfile.open(f) as t:
+                  open(os.path.join(d, nome), "wb").write(t.extractfile(nome).read())
+          os.chmod(os.path.join(d, nome), 0o755)
+          PY
+          b="$RUNNER_TEMP/bao/bao"; [ "$RUNNER_OS" = Windows ] && b="$b.exe"
+          "$b" version
+          echo "PQ_BAO_BIN=$b" >> "$GITHUB_ENV"
+          echo "PQ_REQUIRE_KMS=1" >> "$GITHUB_ENV"
+      - name: SoftHSM2 and OpenSC (Linux, Ubuntu packages pinned)
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq softhsm2 opensc
-          docker pull ghcr.io/openbao/openbao@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9
-          echo "PQ_REQUIRE_KMS=hsm vault" >> "$GITHUB_ENV"
-          echo "PQ_CONTAINER=docker" >> "$GITHUB_ENV"
-      - name: Install SoftHSM2 and OpenSC (macOS)
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq softhsm2=2.6.1-2.2ubuntu3 softhsm2-common=2.6.1-2.2ubuntu3 \
+            libsofthsm2=2.6.1-2.2ubuntu3 opensc=0.25.0~rc1-1ubuntu0.2 opensc-pkcs11=0.25.0~rc1-1ubuntu0.2
+          dpkg-query -W softhsm2 opensc
+      - name: SoftHSM2 and OpenSC (macOS, Homebrew; Homebrew installs the current formula, a version cannot be pinned)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           brew install softhsm opensc
-          echo "PQ_REQUIRE_KMS=hsm" >> "$GITHUB_ENV"
+          brew list --versions softhsm opensc
+      - name: Cache of SoftHSM2 built for Windows (key = SoftHSMv2 commit, runner image, build options)
+        if: runner.os == 'Windows'
+        id: softhsm-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/softhsm
+          key: softhsm2-13e6e86b83748fef74046dbf0c91f664b7acc1c3-windows-2025-x64-openssl-eddsa-v1
+      - name: SoftHSM2 2.7.0 from source (Windows, commit 13e6e86b, vcpkg OpenSSL)
+        if: runner.os == 'Windows' && steps.softhsm-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          src="$RUNNER_TEMP/softhsm-src"; out="$RUNNER_TEMP/softhsm"; vcpkg="$VCPKG_INSTALLATION_ROOT"
+          git init -q "$src" && git -C "$src" fetch -q --depth 1 https://github.com/softhsm/SoftHSMv2 13e6e86b83748fef74046dbf0c91f664b7acc1c3
+          git -C "$src" checkout -q FETCH_HEAD
+          "$vcpkg/vcpkg" install openssl:x64-windows
+          cmake -S "$src" -B "$src/build" -A x64 -DCMAKE_TOOLCHAIN_FILE="$vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DWITH_CRYPTO_BACKEND=openssl -DENABLE_EDDSA=ON -DDISABLE_NON_PAGED_MEMORY=ON -DBUILD_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX="$out"
+          cmake --build "$src/build" --config Release
+          cmake --install "$src/build" --config Release
+          cp "$vcpkg"/installed/x64-windows/bin/*.dll "$out/lib/" 2>/dev/null || cp "$vcpkg"/installed/x64-windows/bin/*.dll "$out/bin/"
+          find "$out" -iname '*.dll'
+      - name: SoftHSM2 module and OpenSC 0.27.1 MSI (Windows, sha256 checked)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          m=$(find "$RUNNER_TEMP/softhsm" -iname 'softhsm2*.dll' | head -1)
+          [ -n "$m" ] || { echo "softhsm2 DLL not found"; exit 1; }
+          echo "PQ_SOFTHSM_MODULE=$(cygpath -w "$m")" >> "$GITHUB_ENV"
+          echo "$(cygpath -w "$(dirname "$m")")" >> "$GITHUB_PATH"
+          f="$RUNNER_TEMP/OpenSC-0.27.1_x64.msi"
+          curl -sSfL -o "$f" https://github.com/OpenSC/OpenSC/releases/download/0.27.1/OpenSC-0.27.1_x64.msi
+          echo "88ea45e848063ff5f3594a457b7f023223472eae9c9c543f8035f7689bb7b319  $f" | sha256sum -c -
+          powershell -NoProfile -Command "\$p = Start-Process msiexec -ArgumentList '/i','$(cygpath -w "$f")','/qn','/norestart' -Wait -PassThru; exit \$p.ExitCode"
+          echo 'C:\Program Files\OpenSC Project\OpenSC\tools' >> "$GITHUB_PATH"
+      - name: pkcs11-tool and the SoftHSM2 module are found
+        shell: bash
+        run: |
+          pkcs11-tool --version 2>&1 | head -2 || true
+          command -v pkcs11-tool
       - name: Install gitleaks 8.30.1 (sha256 checked)
         if: runner.os == 'Linux'
         shell: bash
@@ -72,7 +142,6 @@ jobs:
           python check_tree.py
           python check_tree.py --positive-control
       - name: Positive control of PQ_REQUIRE_KMS (a required HSM that is missing must fail)
-        if: runner.os != 'Windows'
         shell: bash
         run: |
           cd tests
