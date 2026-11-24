@@ -31,6 +31,8 @@ Issues and pull requests are welcome. Security problems: see `SECURITY.md` (priv
    third-party packages (`cryptography`, `slh-dsa`, `liboqs-python`, `boto3`), and any secret found by gitleaks. A pull
    request that changes or adds a file updates the list with `python check_tree.py --update` (see below) and commits
    the new `FILE_LIST.tsv`; the diff of that file shows every change for review.
+   A Dependabot pull request on `requirements/` is merged only with `FILE_LIST.tsv` updated in the same branch
+   (`check_tree.py` refuses the new sha256 of the requirements file otherwise, and the CI fails).
 
 ## Running the checks
 
