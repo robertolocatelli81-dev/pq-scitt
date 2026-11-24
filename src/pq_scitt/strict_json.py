@@ -136,11 +136,22 @@ def loads_object(dati, *, max_depth: int = MAX_DEPTH) -> dict:
     return obj
 
 
+def dispositivo_windows(percorso) -> bool:
+    """Windows: a path of the device namespace (\\\\.\\pipe\\…, \\\\.\\COM1 …) is never a regular file. It is refused
+    by name, before any stat: stat or open would connect to a named pipe and take its only instance."""
+    if os.name != "nt" or not isinstance(percorso, (str, bytes)):
+        return False
+    p = os.fsdecode(percorso).replace("/", "\\")
+    return p.startswith("\\\\.\\")
+
+
 def leggi_file(percorso, limite: int = MAX_FILE) -> bytes:
     """The bytes of a REGULAR file of at most `limite` bytes, opened without blocking. A FIFO blocked the readers
     forever and /dev/zero exhausted the memory (caccia 24/11/2026): not a regular file or too large = OSError
     (EINVAL / EFBIG), like the other "not readable" outcomes, which go to the caller."""
-    fd = os.open(percorso, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    if dispositivo_windows(percorso) or os.path.isdir(percorso):   # one reason everywhere (Windows: PermissionError)
+        raise OSError(errno.EINVAL, "not a regular file", percorso)
+    fd = os.open(percorso, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise OSError(errno.EINVAL, "not a regular file", percorso)

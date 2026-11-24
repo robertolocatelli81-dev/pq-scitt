@@ -60,6 +60,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -621,7 +622,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.out:
         try:
-            with open(args.out, "w") as f:
+            if os.path.isdir(args.out):   # one reason on every system (Linux IsADirectoryError, Windows PermissionError)
+                raise IsADirectoryError(21, "a directory", args.out)
+            # LF and UTF-8 on every system: the same receipt is the same bytes (Windows wrote CRLF in text mode)
+            with open(args.out, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(receipt, f, indent=2, default=str)
         except OSError as e:   # a directory, no permission: an error with its reason, not a traceback
             sys.stderr.write(f"pq-scitt verify-ledger: receipt not written to --out: {type(e).__name__}\n")

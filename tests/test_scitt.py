@@ -27,10 +27,63 @@ from pq_scitt.scitt import export as sx  # noqa: E402
 from pq_scitt.scitt import verify as sv  # noqa: E402
 from pq_scitt import strict_json  # noqa: E402
 
-# 0.1.1: what the platform does not have is skipped with its reason (Windows: no mkfifo; key and salts files
-# need O_NOFOLLOW and geteuid, refused there: test_senza_posix_rifiuta)
-HAVE_FIFO = hasattr(os, "mkfifo")
-POSIX_FILE = hasattr(os, "O_NOFOLLOW") and hasattr(os, "geteuid")
+from pq_scitt import filepriv  # noqa: E402
+
+# 0.1.1: each system with its own means (pq_scitt.filepriv): POSIX modes and FIFOs, Windows ACLs and named pipes. A
+# test skips only where a system has no equivalent at all, with the reason.
+FILE_PRIVATI = filepriv.SUPPORTATO
+
+
+def _allarga(p):
+    """Give another account access to `p`: POSIX group and other read bits; Windows a read entry for Everyone."""
+    if os.name == "nt":
+        import subprocess
+        subprocess.run(["icacls", p, "/grant", "*S-1-1-0:(R)"], check=True, capture_output=True)
+    else:
+        os.chmod(p, os.stat(p).st_mode | 0o044)
+
+
+def _restringi(p):
+    """Undo _allarga."""
+    if os.name == "nt":
+        import subprocess
+        subprocess.run(["icacls", p, "/remove:g", "*S-1-1-0"], check=True, capture_output=True)
+    else:
+        os.chmod(p, 0o600)
+
+
+def _privato(p) -> bool:
+    """`p` is private to the running user: POSIX mode 0600, Windows owner and DACL (pq_scitt.filepriv)."""
+    fd = os.open(p, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    try:
+        st = os.fstat(fd)
+        return filepriv.problema(fd, st) is None and (os.name == "nt" or st.st_mode & 0o777 == 0o600)
+    finally:
+        os.close(fd)
+
+
+def _tubo(test):
+    """A path that is not a regular file and that a reader could block on: a FIFO on POSIX, a named pipe on Windows."""
+    if os.name == "nt":
+        from multiprocessing.connection import Listener
+        ascolto = Listener(family="AF_PIPE")
+        test.addCleanup(ascolto.close)
+        return ascolto.address
+    if not hasattr(os, "mkfifo"):
+        test.skipTest("this system has neither FIFOs nor Windows named pipes")
+    d = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, d, True)
+    p = os.path.join(d, "fifo")
+    os.mkfifo(p, 0o600)
+    return p
+
+
+def _link(test, bersaglio, link):
+    """os.symlink, or skip the test where the system refuses to create links (Windows without the privilege)."""
+    try:
+        os.symlink(bersaglio, link)
+    except OSError as e:
+        test.skipTest("creating a symbolic link is not allowed here (%s)" % e)
 
 
 def _firmatario(alg):
@@ -612,14 +665,17 @@ class TestRevisioneP1P2(unittest.TestCase):
         sx.scrivi_cartella(b.es, d)
         return d, dict(alg_statement=-19, alg_receipt=-19, chiave_ts=(-19, b.T.pub), chiave_politica=(-19, b.P.pub))
 
-    @unittest.skipUnless(HAVE_FIFO, "needs os.mkfifo (not on this platform)")
     def test_file_non_regolari(self):
         b = Banco(n=4)
-        for tipo in ("fifo", "dir", "illeggibile"):
+        # a FIFO inside the export folder: POSIX only (Windows named pipes exist only under \\.\pipe\, never in a folder)
+        for tipo in (("fifo",) if hasattr(os, "mkfifo") else ()) + ("dir", "illeggibile"):
             d, arg = self._cartella(b)
             self.assertTrue(sv.verifica_cartella(d, **arg).ok)          # positive control
             p = os.path.join(d, "ts_000003.cose")
-            if tipo == "illeggibile":
+            if tipo == "illeggibile" and os.name == "nt":
+                import subprocess
+                subprocess.run(["icacls", p, "/deny", "*S-1-1-0:(R)"], check=True, capture_output=True)
+            elif tipo == "illeggibile":
                 os.chmod(p, 0)
                 if os.access(p, os.R_OK):
                     continue                                              # root reads everything
@@ -633,7 +689,9 @@ class TestRevisioneP1P2(unittest.TestCase):
             self.assertTrue(esiti, tipo + ": verification blocked or exception")
             e = esiti[0]
             self.assertEqual((e.ok, e.motivo), (False, "forma_cose"), tipo)
-            if tipo == "illeggibile":
+            if tipo == "illeggibile" and os.name == "nt":
+                subprocess.run(["icacls", p, "/remove:d", "*S-1-1-0"], check=True, capture_output=True)
+            elif tipo == "illeggibile":
                 os.chmod(p, 0o600)
 
     def _foglia_in_piu(self, b, cty, iss, riga):
@@ -772,7 +830,8 @@ class TestRevisioneP1P2(unittest.TestCase):
                                                   chiavi_ts={})
         self.assertEqual((e.ok, e.motivo), (False, "cbor_troppo_profondo"))
 
-    @unittest.skipUnless(HAVE_FIFO, "needs os.mkfifo (not on this platform)")
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no equivalent: a non-regular file inside a folder that can be opened "
+                         "(Windows has no FIFO in a folder and does not open a directory as a file)")
     def test_descrittore_zero_chiuso_dopo_rifiuto(self):
         """Stdin closed: os.open gives descriptor 0 to the first file; a non-regular file must be refused AND closed."""
         import subprocess
@@ -815,6 +874,8 @@ def _chiave_file(d, nome, contenuto: bytes, modo=0o600):
     with os.fdopen(fd, "wb") as f:
         f.write(contenuto)
     os.chmod(p, modo)
+    if os.name == "nt" and modo & 0o077:   # Windows: group/other access is an entry for another account
+        _allarga(p)
     return p
 
 
@@ -1149,7 +1210,7 @@ class TestChiaviPersistenti(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.d, True)
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_file_formati_ammessi(self):
         ke = ed25519.Ed25519PrivateKey.generate()
         km = mldsa.MLDSA65PrivateKey.generate()
@@ -1167,7 +1228,7 @@ class TestChiaviPersistenti(unittest.TestCase):
                 self.assertEqual((f.alg, f.pub), (alg, pub), (i, modo))
                 sx.signed_statement(f, "i", "omega-ledger:a", sx.CTY_RIGA_OPS, b"{}")   # sign and self-verify
 
-    @unittest.skipUnless(HAVE_FIFO and POSIX_FILE, "needs os.mkfifo and POSIX owner/link/permission checks (not on this platform)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_file_rifiutati(self):
         from cryptography.hazmat.primitives import serialization as ser
         ke = ed25519.Ed25519PrivateKey.generate()
@@ -1190,11 +1251,9 @@ class TestChiaviPersistenti(unittest.TestCase):
                 ("ftp:x", -19, "scheme"), (5, -19, "string"), ("file:" + buono, 7, "allowed alg: -19, -8, -49"),
                 ("file:" + _chiave_file(self.d, "limite", b"0" * (64 * 1024)), -19, "allowed formats")]   # 64 KiB: read
         link = os.path.join(self.d, "link")
-        os.symlink(buono, link)
+        _link(self, buono, link)
         casi.append(("file:" + link, -19, "cannot be opened"))
-        fifo = os.path.join(self.d, "fifo")
-        os.mkfifo(fifo, 0o600)
-        casi.append(("file:" + fifo, -19, "regular file"))
+        casi.append(("file:" + _tubo(self), -19, "regular file"))
         for uri, alg, testo in casi:
             if testo is None:
                 sx.carica_firmatario(uri, alg)
@@ -1203,7 +1262,8 @@ class TestChiaviPersistenti(unittest.TestCase):
                 sx.carica_firmatario(uri, alg)
             self.assertIn(testo, str(c.exception), uri)
         from unittest import mock
-        with mock.patch.object(sx.os, "geteuid", return_value=os.geteuid() + 1):
+        altro = frozenset({"S-1-5-21-1-2-3-1000"}) if os.name == "nt" else os.geteuid() + 1
+        with mock.patch.object(filepriv, "utente", return_value=altro):
             with self.assertRaises(sx.ExportError) as c:
                 sx.carica_firmatario("file:" + buono, -19)
         self.assertIn("owner", str(c.exception))
@@ -1321,7 +1381,7 @@ class TestCLIExport(unittest.TestCase):
             self.assertEqual(c.exception.code, 2, argv)
         self.assertFalse(os.path.exists(u))
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_chiavi_da_file_e_rifiuti(self):
         chiavi = []
         for n in ("i", "t", "p"):
@@ -1336,9 +1396,9 @@ class TestCLIExport(unittest.TestCase):
         for n in sorted(os.listdir(u1)):
             with open(os.path.join(u1, n), "rb") as f1, open(os.path.join(u2, n), "rb") as f2:
                 self.assertEqual(f1.read(), f2.read(), n)
-        os.chmod(chiavi[1], 0o644)
+        _allarga(chiavi[1])
         self.assertEqual(sx._main([self.reg, os.path.join(self.d, "u3"), "--nome", "r", "--versione", "1", "--payload", "chiaro"] + arg), 1)
-        os.chmod(chiavi[1], 0o600)
+        _restringi(chiavi[1])
         arg_uguali = ["--chiave-issuer", "file:" + chiavi[0], "--chiave-ts", "file:" + chiavi[0],
                       "--chiave-politica", "file:" + chiavi[2]]
         self.assertEqual(sx._main([self.reg, os.path.join(self.d, "u4"), "--nome", "r", "--versione", "1", "--payload", "chiaro"]
@@ -1371,7 +1431,7 @@ class TestRevisioneA2(unittest.TestCase):
         os.chmod(p, 0o600)
         return "file:" + p
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_pem_solo_un_blocco(self):
         self.assertEqual(sx.carica_firmatario(self._file("ok.pem", self.pem + b"\n"), -19).pub,
                          self.k.public_key().public_bytes_raw())
@@ -1437,7 +1497,7 @@ class TestRevisioneA2(unittest.TestCase):
                             iss_issuer="i", iss_ts="t", payload="riservato")
             self.assertEqual(es["tree_size"], 3)
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_file_cresciuto_dopo_fstat(self):
         """st_size says 100 bytes, the file has 64 KiB + 10: the limit applies to the bytes read."""
         from unittest import mock
@@ -1468,7 +1528,7 @@ class TestRevisioneA2(unittest.TestCase):
         self.assertEqual(sx._main([reg, os.path.join(self.d, "u"), "--nome", "r", "--versione", "1", "--payload", "riservato",
                                    "--effimere"]), 0)                       # positive control
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_misto_chiavi_effimere_codice_2(self):
         """Surviving mutants in review A2: `any`→`all` and p.error(mixed)→pass. Mixing is a usage error (rc 2),
         before touching files or the ledger."""
@@ -1884,19 +1944,19 @@ class TestSalePerRiga(unittest.TestCase):
         dati = sx.aggiungi_receipt(st, sx.receipt(b.T, "omega.ts", b.es["sub"], a.radice(), 2, 0, a.percorso(0), ADESSO))
         self.assertEqual(b.verifica(dati).motivo, "catena_riga_non_valida")
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_leggi_e_scrivi_sali(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
         f = os.path.join(d, "sali.jsonl")
         sali = [os.urandom(32) for _ in range(3)]
         sx.scrivi_sali(sali, f)
-        self.assertEqual(os.stat(f).st_mode & 0o777, 0o600)
+        self.assertTrue(_privato(f))
         self.assertEqual(sx.leggi_sali(f), sali)
         with self.assertRaises(sx.ExportError):
             sx.scrivi_sali(sali, f)                                   # does not overwrite
         link = os.path.join(d, "link")
-        os.symlink(os.path.join(d, "altro"), link)
+        _link(self, os.path.join(d, "altro"), link)
         with self.assertRaises(sx.ExportError):
             sx.scrivi_sali(sali, link)
         self.assertFalse(os.path.exists(os.path.join(d, "altro")))
@@ -1930,11 +1990,11 @@ class TestCLIVersione2(unittest.TestCase):
         m = json_manifest(u)["chiavi_pubbliche_da_confrontare_fuori_banda"]
         return ["--ts-pub", m["ts"][1], "--politica-pub", m["politica"][1]]
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_riservato_v2_con_sali(self):
         u, s = os.path.join(self.d, "u"), os.path.join(self.d, "sali.jsonl")
         self.assertEqual(sx._main([self.reg, u, "--nome", "r", "--payload", "riservato", "--effimere", "--sali", s]), 0)
-        self.assertEqual(os.stat(s).st_mode & 0o777, 0o600)
+        self.assertTrue(_privato(s))
         self.assertEqual(json_manifest(u)["profilo"], "omega-scitt/2")
         self.assertEqual(sv._main([u, "--alg", "-19"] + self._pub(u)), 0)
         self.assertEqual(sv._main([u, "--alg", "-19", "--registro", self.reg, "--sali", s] + self._pub(u)), 0)
@@ -1982,7 +2042,7 @@ class TestCLIVersione2(unittest.TestCase):
             self.assertEqual("WARNING format 1" in out.getvalue(), avviso, payload)
         self.assertEqual(json_manifest(u)["profilo"], "omega-scitt/2")
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_chiavi_persistenti_vogliono_validita(self):
         k = []
         for n in "itp":
@@ -2307,7 +2367,7 @@ class TestConsistenza(unittest.TestCase):
         with self.assertRaises(sx.ExportError):
             sx.estendi(c, r1, **kw1)
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_cli(self):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
@@ -2416,7 +2476,7 @@ class TestRevisioneScitt2(unittest.TestCase):
         e = sv.verifica_cartella(_cartella_di(self, _riforgia(b, d)), **_arg_cartella(b))
         self.assertEqual((e.ok, e.motivo), (False, "politica_fuori_profilo"))
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_p2_uscita_esistente_rifiutata(self):
         import io
         from contextlib import redirect_stdout
@@ -2483,13 +2543,11 @@ class TestRevisioneScitt2(unittest.TestCase):
         self.assertEqual(out, "[0, 1]")                                       # only one creates the output
         self.assertTrue(es["tree_size"] == 4)
 
-    @unittest.skipUnless(HAVE_FIFO, "needs os.mkfifo (not on this platform)")
     def test_p4_file_dei_sali_regolare(self):
         import subprocess
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
-        fifo = os.path.join(d, "fifo")
-        os.mkfifo(fifo)
+        fifo = _tubo(self)
         codice = ("import sys; sys.path[:0]=[%r,%r]; from pq_scitt.scitt import export as sx\n"
                   "try:\n sx.leggi_sali(%r)\nexcept sx.ExportError as e: print('REFUSED', e)") % (
                       RADICE, os.path.join(RADICE, "chain"), fifo)
@@ -2505,7 +2563,7 @@ class TestRevisioneScitt2(unittest.TestCase):
         sx.scrivi_sali([bytes(range(32)), bytes(32)], buono)
         self.assertEqual(sx.leggi_sali(buono), [bytes(range(32)), bytes(32)])     # positive control
 
-    @unittest.skipUnless(POSIX_FILE, "key and salts files need POSIX owner/link/permission checks; refused on this platform (test_senza_posix_rifiuta)")
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership: key and salts files are refused (TestFilePrivati)")
     def test_cli_dice_sali_solo_se_usati(self):
         import io
         from contextlib import redirect_stdout
@@ -2617,29 +2675,45 @@ class TestRevisioneScitt2(unittest.TestCase):
                                              **_arg_cartella(b2)).ok)         # positive control
 
 
-class TestSenzaPosix(unittest.TestCase):
-    def test_senza_posix_rifiuta(self):
-        """0.1.1: without O_NOFOLLOW/geteuid (Windows) a key file and a salts file are refused with a reason; on 0.1.0
-        it was an AttributeError traceback. Simulated here by removing the two names for the duration of the test."""
-        d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, d, True)
-        chiave = os.path.join(d, "k")
+class TestFilePrivati(unittest.TestCase):
+    """0.1.1 (pq_scitt.filepriv): on 0.1.0 a key file or a salts file was an AttributeError traceback on Windows. The
+    same rule on POSIX (modes) and on Windows (owner SID and DACL); another system is refused with the reason."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    @unittest.skipUnless(FILE_PRIVATI, "this system has neither POSIX nor Windows file ownership")
+    def test_privato_e_poi_aperto_ad_altri(self):
+        p = os.path.join(self.d, "sali")
+        sx.scrivi_sali([b"\x00" * 32], p)
+        self.assertTrue(_privato(p))                                       # positive control
+        _allarga(p)
+        fd = os.open(p, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+        try:
+            motivo = filepriv.problema(fd, os.fstat(fd))
+        finally:
+            os.close(fd)
+        self.assertIn("permissions", motivo or "")
+        with self.assertRaises(sx.ExportError) as c:
+            sx.carica_firmatario("file:" + p, sx.ALG_ED25519)
+        self.assertIn("permissions", str(c.exception))
+
+    def test_altro_sistema_rifiuta(self):
+        """Neither POSIX nor Windows (simulated): a key file and a salts file are refused with the reason."""
+        from unittest import mock
+        chiave = os.path.join(self.d, "k")
         with open(chiave, "w") as f:
             f.write("00" * 32)
-        tolti = {n: getattr(os, n) for n in ("O_NOFOLLOW", "geteuid") if hasattr(os, n)}
-        for n in tolti:
-            delattr(os, n)
-        try:
+        with mock.patch.object(filepriv, "POSIX", False), mock.patch.object(filepriv, "WINDOWS", False):
             with self.assertRaises(sx.ExportError) as c:
                 sx.carica_firmatario("file:" + chiave, sx.ALG_ED25519)
-            self.assertIn("need a POSIX system", str(c.exception))
+            self.assertIn("neither POSIX nor Windows", str(c.exception))
             with self.assertRaises(sx.ExportError) as c:
-                sx.scrivi_sali([b"\x00" * 32], os.path.join(d, "sali"))
-            self.assertIn("needs a POSIX system", str(c.exception))
-        finally:
-            for n, v in tolti.items():
-                setattr(os, n, v)
-        self.assertFalse(os.path.exists(os.path.join(d, "sali")))
+                sx.scrivi_sali([b"\x00" * 32], os.path.join(self.d, "sali"))
+            self.assertIn("neither POSIX nor Windows", str(c.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.d, "sali")))
+
 
 if __name__ == "__main__":
     unittest.main()

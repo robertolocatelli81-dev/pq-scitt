@@ -397,7 +397,7 @@ class TestExistingScriptRuns(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
             try:
-                exec(compile(open(path).read(), path, "exec"), g)
+                exec(compile(open(path, encoding="utf-8").read(), path, "exec"), g)
                 rc = 0
             except SystemExit as se:
                 rc = se.code if se.code is not None else 0

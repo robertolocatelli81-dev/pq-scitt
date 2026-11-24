@@ -714,7 +714,11 @@ def verify_ledger(path: str, algo: Optional[str] = None, tip: Optional[str] = No
         # nothing but ASCII space / tab / CR — never Unicode whitespace (str.strip() took U+00A0).
         # regular file only, opened without blocking and read up to the bound (a FIFO blocked forever, /dev/zero
         # exhausted the memory: caccia 24/11/2026; cryptovalid-opencore reads its input the same way since 0.26.0)
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        # one reason everywhere (Windows cannot open a directory: PermissionError); a Windows device path (\\.\pipe\…)
+        # is refused by name: stat or open would connect to a named pipe
+        if (os.name == "nt" and os.fsdecode(path).replace("/", "\\").startswith("\\\\.\\")) or os.path.isdir(path):
+            raise OSError(errno.EINVAL, "not a regular file")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
         try:
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise OSError(errno.EINVAL, "not a regular file")

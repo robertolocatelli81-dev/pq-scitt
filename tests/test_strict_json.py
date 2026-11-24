@@ -8,6 +8,29 @@ import unittest
 from pq_scitt import strict_json as sj
 
 
+
+def _ingressi_speciali(test, d):
+    """The non-regular inputs this system has, each as (name, factory of a fresh path). POSIX: a FIFO and /dev/zero;
+    Windows (0.1.1): a named pipe (multiprocessing.connection, one new pipe per call: a pipe instance serves one
+    client) and the NUL device; everywhere: a directory."""
+    out = [("directory", lambda: d)]
+    if hasattr(os, "mkfifo"):
+        fifo = os.path.join(d, "fifo")
+        os.mkfifo(fifo)
+        out.append(("fifo", lambda: fifo))
+    if os.path.exists("/dev/zero"):
+        out.append(("/dev/zero", lambda: "/dev/zero"))
+    if os.name == "nt":
+        from multiprocessing.connection import Listener
+
+        def tubo():
+            ascolto = Listener(family="AF_PIPE")
+            test.addCleanup(ascolto.close)
+            return ascolto.address
+        out.append(("named pipe", tubo))
+        out.append(("NUL", lambda: "NUL"))
+    return out
+
 class TestStrictJSON(unittest.TestCase):
     def _rifiuta(self, dati, motivo):
         with self.assertRaises(sj.StrictJSONError) as c:
@@ -81,13 +104,7 @@ class TestCaccia20261124(unittest.TestCase):
         import tempfile
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
-        fifo, buono = os.path.join(d, "f"), os.path.join(d, "l.jsonl")
-        speciali = [d]                                    # a FIFO and /dev/zero only where the platform has them
-        if hasattr(os, "mkfifo"):
-            os.mkfifo(fifo)
-            speciali.append(fifo)
-        if os.path.exists("/dev/zero"):
-            speciali.append("/dev/zero")
+        buono = os.path.join(d, "l.jsonl")
         with open(buono, "wb") as f:
             f.write(b'{"a":1}\n\n{"b":2}\n')
         import subprocess
@@ -104,20 +121,33 @@ class TestCaccia20261124(unittest.TestCase):
                 pass
         codice = ("import sys\nfrom pq_scitt import strict_json as sj\ntry:\n sj.load_jsonl(sys.argv[1])\n"
                   "except OSError as e:\n print('OSError', e.errno)")
-        for p in speciali:
+        for nome, nuovo in _ingressi_speciali(self, d):
+            p = nuovo()
             try:
                 r = subprocess.run([sys.executable, "-B", "-c", codice, p], capture_output=True, text=True, timeout=30,
                                    preexec_fn=limite if resource else None)
             except subprocess.TimeoutExpired:
                 self.fail("load_jsonl(%r) blocked" % p)
-            # a directory: EINVAL where it can be opened (Linux, macOS), EACCES where it cannot (Windows)
-            atteso = {errno.EINVAL} if p != d else {errno.EINVAL, errno.EACCES}
-            self.assertEqual(r.returncode, 0, (p, r.stderr[-200:]))
-            self.assertIn(r.stdout, {"OSError %d\n" % x for x in atteso}, (p, r.stdout, r.stderr[-200:]))
+            self.assertEqual((r.returncode, r.stdout), (0, "OSError %d\n" % errno.EINVAL), (nome, r.stderr[-200:]))
         with self.assertRaises(OSError) as c:
             sj.leggi_file(buono, 3)
         self.assertEqual(c.exception.errno, errno.EFBIG)
         self.assertEqual(sj.load_jsonl(buono), [{"a": 1}, {"b": 2}])   # positive control
+
+class TestPercorsiDispositivoWindows(unittest.TestCase):
+    def test_pipe_rifiutata_per_nome(self):
+        r"""Windows: \\.\pipe\… is refused by its name, never stat-ed or opened (that would connect to the pipe and
+        take its only instance). Checked here with os.name patched: the path is not touched (it does not exist)."""
+        from unittest import mock
+        for p in (r"\\.\pipe\pq-scitt-prova", "//./pipe/pq-scitt-prova", r"\\.\COM9"):
+            with mock.patch.object(sj.os, "name", "nt"), mock.patch.object(sj.os.path, "isdir",
+                                                                         side_effect=AssertionError("stat-ed")):
+                with self.assertRaises(OSError) as c:
+                    sj.leggi_file(p)
+            self.assertEqual(c.exception.errno, errno.EINVAL, p)
+        with mock.patch.object(sj.os, "name", "nt"):              # positive control: an ordinary path is not one
+            self.assertFalse(sj.dispositivo_windows(r"C:\dati\registro.jsonl"))
+
 
 if __name__ == "__main__":
     unittest.main()

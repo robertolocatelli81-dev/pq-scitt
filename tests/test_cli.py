@@ -39,6 +39,29 @@ def _registro(d, n=3, altera=False):
     return p
 
 
+
+def _ingressi_speciali(test, d):
+    """The non-regular inputs this system has, each as (name, factory of a fresh path). POSIX: a FIFO and /dev/zero;
+    Windows (0.1.1): a named pipe (multiprocessing.connection, one new pipe per call: a pipe instance serves one
+    client) and the NUL device; everywhere: a directory."""
+    out = [("directory", lambda: d)]
+    if hasattr(os, "mkfifo"):
+        fifo = os.path.join(d, "fifo")
+        os.mkfifo(fifo)
+        out.append(("fifo", lambda: fifo))
+    if os.path.exists("/dev/zero"):
+        out.append(("/dev/zero", lambda: "/dev/zero"))
+    if os.name == "nt":
+        from multiprocessing.connection import Listener
+
+        def tubo():
+            ascolto = Listener(family="AF_PIPE")
+            test.addCleanup(ascolto.close)
+            return ascolto.address
+        out.append(("named pipe", tubo))
+        out.append(("NUL", lambda: "NUL"))
+    return out
+
 class TestSmistamento(unittest.TestCase):
     CASI = [("export", export, "_main"), ("verify", verify, "_main"), ("verify-ledger", ledger_verify, "main"),
             ("verify-ledger-standalone", standalone, "main"), ("kms", kms, "main")]
@@ -134,7 +157,8 @@ class TestPuntiDiIngresso(unittest.TestCase):
         return {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
 
     def test_script_installato(self):
-        exe = os.path.join(sysconfig.get_path("scripts"), "pq-scitt")
+        # the console script pip writes: pq-scitt on POSIX, pq-scitt.exe on Windows
+        exe = os.path.join(sysconfig.get_path("scripts"), "pq-scitt" + (".exe" if os.name == "nt" else ""))
         self.assertTrue(os.path.isfile(exe), exe)
         r = subprocess.run([exe, "--version"], capture_output=True, text=True, env=self._env(), timeout=60)
         self.assertEqual((r.returncode, r.stdout), (0, "pq-scitt %s\n" % pq_scitt.__version__))
@@ -178,30 +202,25 @@ class TestCacciaInputSpeciali(unittest.TestCase):
     def test_fifo_zero_cartella(self):
         d = tempfile.mkdtemp()
         self.addCleanup(__import__("shutil").rmtree, d, True)
-        fifo, buono = os.path.join(d, "fifo"), _registro(d)
-        speciali = [d]                                    # what the platform has: a FIFO and /dev/zero are POSIX
-        if hasattr(os, "mkfifo"):
-            os.mkfifo(fifo)
-            speciali.append(fifo)
-        if os.path.exists("/dev/zero"):
-            speciali.append("/dev/zero")
-        for p in speciali:
-            with self.subTest(p):
+        buono = _registro(d)
+        for nome, nuovo in _ingressi_speciali(self, d):
+            with self.subTest(nome):
                 for sub in ("verify-ledger", "verify-ledger-standalone"):
-                    r = self._cli(sub, p)
+                    r = self._cli(sub, nuovo())
                     self.assertEqual(r.returncode, 1)
                     self.assertIn(b'"verdict": "FAIL"', r.stdout)
-                r = self._cli("verify-ledger", buono, "--checkpoint", p, "--checkpoint-pubkey", "00" * 32)
+                r = self._cli("verify-ledger", buono, "--checkpoint", nuovo(), "--checkpoint-pubkey", "00" * 32)
                 self.assertEqual(r.returncode, 1)
                 self.assertIn(b"checkpoint unreadable", r.stdout)
-                r = self._cli("export", p, os.path.join(d, "u"), "--nome", "x", "--payload", "chiaro", "--effimere")
+                r = self._cli("export", nuovo(), os.path.join(d, "u"), "--nome", "x", "--payload", "chiaro",
+                              "--effimere")
                 self.assertEqual(r.returncode, 1)
                 self.assertIn(b"REFUSED ledger not readable", r.stdout)
                 r = self._cli("verify", d, "--alg", "-19", "--ts-pub", "00", "--politica-pub", "00",
-                              "--registro", p, "--sali", buono)
+                              "--registro", nuovo(), "--sali", buono)
                 self.assertEqual(r.returncode, 1)
                 self.assertIn(b"REFUSED impegno_non_valido", r.stdout)
-                r = self._cli("kms", "pubkey", "--backend", "file:" + p)
+                r = self._cli("kms", "pubkey", "--backend", "file:" + nuovo())
                 self.assertEqual(r.returncode, 1)
                 self.assertIn(b"REFUSED", r.stderr)
         r = self._cli("verify-ledger", buono)               # positive control: the same commands still read a ledger

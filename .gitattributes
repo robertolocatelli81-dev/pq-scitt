@@ -1,0 +1,3 @@
+# Every file is kept byte for byte (no CRLF conversion on Windows checkouts): FILE_LIST.tsv and the tests pin
+# sha256 of files (tests/data, examples), and a ledger line is hashed as bytes.
+* -text

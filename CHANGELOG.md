@@ -18,8 +18,14 @@ Defects of 0.1.0, all present since the initial import (4bf24e9), each with a te
 - `pq-scitt verify-ledger`: `--expect-hmac` with a non-ASCII character, `--hmac-key` given as non-UTF-8 bytes and an
   unwritable `--out` were tracebacks.
 - `pq_scitt.kms`: a malformed NetHSM answer was a KeyError traceback.
-- `pq-scitt export` on a platform without `O_NOFOLLOW`/`geteuid` (Windows): `file:` keys and the salts file were an
-  AttributeError traceback; now refused with the reason.
+- `pq-scitt export` on Windows (no `O_NOFOLLOW`, no `geteuid`): `file:` keys and the salts file were an AttributeError
+  traceback. New `pq_scitt.filepriv`: the same rule with the Windows means (owner SID and DACL; no reparse point;
+  the salts file gets a protected DACL for the user only). Another system refuses with the reason.
+- Windows: a directory given as input was a PermissionError; now "not a regular file", as on POSIX. A device path
+  (`\\.\pipe\…`) is refused by its name, never opened (opening would connect to a named pipe).
+- `verify-ledger --out` writes the receipt as UTF-8 with LF on every system (Windows wrote CRLF).
+- `.gitattributes`: no CRLF conversion on Windows checkouts (the tests pin the sha256 of `tests/data`; the CI run of the
+  `ci-prova-0.1.1` branch showed a different hash of the Wycheproof file on Windows).
 - The `verifier` field of the `verify-ledger` and `verify-ledger-standalone` receipts names the installed version.
 
 Texts corrected:
@@ -39,7 +45,8 @@ Build and CI:
 
 - `requirements/ci.txt`: cryptography 50.0.2 (regenerated from the PyPI JSON API on 2026-11-24, every published file);
   supersedes the Dependabot pull request #1, which could not pass `check_tree.py`.
-- CI on every branch: Linux with Python 3.10 to 3.14, macOS and Windows with 3.13, each with and without `slh-dsa`.
+- CI on every branch: Linux with Python 3.10 to 3.14, macOS and Windows with 3.13, each with and without `slh-dsa`; the
+  log lists every skip with its reason, and a skip for a missing POSIX `sh` fails the job.
 
 ## 0.1.0 (initial import 2026-11-08, GitHub release 2026-11-12)
 

@@ -292,8 +292,10 @@ def verifica_transparent_statement(dati, *, alg_statement: int, alg_receipt: int
 
 def _leggi_file(cartella: str, nome: str):
     """review P1: regular files only, opened without blocking (FIFO), limited size; error = rejection Esito."""
+    if os.path.isdir(os.path.join(cartella, nome)):   # one reason everywhere (Windows: PermissionError on open)
+        return Esito(False, "forma_cose", nome + ": not a regular file")
     try:
-        fd = os.open(os.path.join(cartella, nome), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        fd = os.open(os.path.join(cartella, nome), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     except OSError as e:
         return Esito(False, "forma_cose", nome + ": " + type(e).__name__)
     try:

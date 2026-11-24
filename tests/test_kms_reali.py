@@ -229,7 +229,8 @@ class TestSoftHsmReale(_Comune):
         priv = [b for b in self._oggetti() if b["tipo"] == "Private Key Object" and b["label"] == "issuer"]
         self.assertEqual(len(priv), 1, "second key created with the same label")
 
-    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW") and hasattr(os, "geteuid"), "salts files need POSIX permissions")
+    @unittest.skipUnless(__import__("pq_scitt.filepriv").filepriv.SUPPORTATO,
+                         "this system has neither POSIX nor Windows file ownership: the salts file is refused")
     def test_m1_export_e_verifica_chiaro_e_riservato(self):
         uri = (self.uri("issuer"), self.uri("ts"), self.uri("politica"))
         for payload in ("chiaro", "riservato"):

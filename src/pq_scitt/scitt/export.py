@@ -50,9 +50,11 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, mldsa
 
 try:
     from pq_scitt.scitt import cbor as cbor
+    from pq_scitt import filepriv
 except ImportError:  # source tree
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from pq_scitt.scitt import cbor as cbor
+    from pq_scitt import filepriv
 
 PROFILO = "omega-scitt/1"
 PROFILO_2 = "omega-scitt/2"
@@ -313,27 +315,27 @@ SCHEMI_KMS_ED25519 = ("pkcs11", "awskms", "awskms-http", "vault", "nethsm")
 
 
 def _leggi_file_chiave(percorso: str) -> bytes:
-    """Amendment 7: regular file, last component not a link (O_NOFOLLOW; the directories of the path are not
-    checked), owned by the running user, no group or other bits, ≤ 64 KiB.
-    Checks on the open descriptor (fstat), not on the name: no window between check and read.
-    Without O_NOFOLLOW and geteuid (Windows) these checks cannot be made: refused, never skipped (0.1.1; on 0.1.0 it
-    was an AttributeError traceback)."""
-    if not (hasattr(os, "O_NOFOLLOW") and hasattr(os, "geteuid")):
-        raise ExportError("key file: the owner, link and permission checks need a POSIX system; use a KMS/HSM URI or "
-                          "--effimere")
+    """Amendment 7: regular file, last component not a link, owned by the running user, nobody else with access,
+    ≤ 64 KiB. POSIX: O_NOFOLLOW, st_uid, no group or other bits. Windows (0.1.1): no reparse point, owner SID and DACL
+    (pq_scitt.filepriv; on 0.1.0 an AttributeError traceback). Checks on the open descriptor (fstat, security info),
+    not on the name: no window between check and read."""
     try:
-        fd = os.open(percorso, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+        fd, prima = filepriv.apri_in_lettura(percorso)
+    except filepriv.NonPrivato as e:
+        raise ExportError("key file: %s; use a KMS/HSM URI or --effimere" % e) from None
+    except filepriv.NonRegolare:
+        raise ExportError("key file: not a regular file") from None
     except (OSError, ValueError) as e:   # ValueError: NUL byte in the path (API only)
         raise ExportError("key file: cannot be opened (%s)" % type(e).__name__) from None
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise ExportError("key file: not a regular file")
-        if st.st_uid != os.geteuid():
-            raise ExportError("key file: the owner is not the running user")
-        if st.st_mode & 0o077:
-            raise ExportError("key file: permissions %o, no permissions for group and others (e.g. 0600 or 0400)"
-                              % stat.S_IMODE(st.st_mode))
+        if not filepriv.stesso_file(prima, st):
+            raise ExportError("key file: cannot be opened (changed between the check and the open)")
+        motivo = filepriv.problema(fd, st)
+        if motivo:
+            raise ExportError("key file: " + motivo)
         if st.st_size > MAX_FILE_CHIAVE:
             raise ExportError("key file: over 64 KiB")
         with os.fdopen(fd, "rb") as f:
@@ -738,12 +740,12 @@ def _crea_uscita(cartella: str) -> None:
 
 
 def scrivi_sali(sali: Sequence[bytes], percorso: str) -> None:
-    """Amendment 10b: NEW file (O_EXCL, no links), 0600, one line {"idx", "sale"} per ledger line. Without POSIX
-    permissions (Windows) the 0600 mode is not applied: refused (0.1.1; on 0.1.0 an AttributeError traceback)."""
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise ExportError("salts: the 0600 file mode needs a POSIX system; the salts are secret")
+    """Amendment 10b: NEW file (O_EXCL, no links) that only the running user can access (POSIX 0600; Windows 0.1.1: a
+    protected DACL with the user only, set before writing, pq_scitt.filepriv), one line {"idx", "sale"} per line."""
     try:
-        fd = os.open(percorso, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        fd = filepriv.crea_privato(percorso)
+    except filepriv.NonPrivato as e:
+        raise ExportError("salts: %s; the salts are secret" % e) from None
     except (OSError, ValueError) as e:
         raise ExportError("salts: file cannot be created (%s): it must be new" % type(e).__name__) from None
     with os.fdopen(fd, "wb") as f:
@@ -760,8 +762,10 @@ def leggi_sali(percorso: str) -> List[bytes]:
         from pq_scitt import strict_json
     out = []
     # review SCITT2 P4: only a regular file, opened without blocking (a FIFO blocked forever)
+    if strict_json.dispositivo_windows(percorso) or os.path.isdir(percorso):   # one reason on every system
+        raise ExportError("salts: not a regular file")
     try:
-        fd = os.open(percorso, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        fd = os.open(percorso, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     except (OSError, ValueError, TypeError) as e:
         raise ExportError("salts: file not readable (%s)" % type(e).__name__) from None
     if not stat.S_ISREG(os.fstat(fd).st_mode):
