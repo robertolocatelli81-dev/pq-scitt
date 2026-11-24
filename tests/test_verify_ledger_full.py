@@ -405,5 +405,39 @@ class TestExistingScriptRuns(unittest.TestCase):
         self.assertEqual(rc, 0, "the self-check of the legacy script must pass")
 
 
+class TestCaccia20261124(_TmpMixin):
+    def test_generic_testa_tagliata(self):
+        """Generic mode: cutting the first lines (a partial edit, no hash recomputed) was PASS; entry 0 must start
+        from the genesis."""
+        chain = []
+        prev = GENESIS_PREV
+        for i in range(4):
+            e = _native_entry({"v": i}, prev)
+            chain.append(e)
+            prev = e["hash"]
+        self.assertEqual(verify_ledger(self.ledger(chain))["verdict"], "PASS")     # positive control
+        for tagliate in (1, 2):
+            r = verify_ledger(self.ledger(chain[tagliate:]))
+            self.assertEqual(r["mode"], "full_recompute_generic")
+            self.assertEqual(r["verdict"], "FAIL", tagliate)
+            self.assertIn(0, r["link_failures_idx"])
+
+    def test_idx_booleano_o_decimale(self):
+        """idx true / 1.0 equal 1 in Python: a re-chained ledger with them was PASS (the standalone verifier and
+        cryptovalid-opencore 0.29.0 say FAIL)."""
+        for strano in (True, 1.0):
+            chain, prev = [], GENESIS_PREV
+            for i in range(3):
+                e = _sealed_idx_entry(i, {"n": i}, prev)
+                if i == 1:
+                    e = {k: v for k, v in e.items() if k != "self_hash"}
+                    e["idx"] = strano
+                    e["self_hash"] = hash_with("sha256", canonical_payload(e))
+                chain.append(e)
+                prev = e["self_hash"]
+            r = verify_ledger(self.ledger(chain))
+            self.assertEqual(r["verdict"], "FAIL", strano)
+            self.assertFalse(r["idx_monotonic"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

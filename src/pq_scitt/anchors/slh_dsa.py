@@ -27,7 +27,8 @@ FORMAT SPECIFICATION (versioned, 08/11/2026):
     'slhdsa'). Measured on the NIST ACVP vectors (tests/data/acvp_slhdsa_sha2_128f.json, tests/test_anchor_slhdsa_fips205.py): v1 'slhdsa' passes the
     "internal" group and NOT the "external/pure" group; this is why new anchors are v2.
 
-Honest cost: large signature (~50KB with sha2_256f) and sign ~100ms (C) / ~600ms (Python). RARE anchors
+Honest cost: large signature (49,856 bytes with sha2_256f) and a slow sign: 0.34 s with slh-dsa 0.2.5 on Python 3.12
+(x86-64, measured 24/11/2026); the liboqs figure above was measured on 08/11/2026. RARE anchors
 (one per rotation/segment) → amortized cost. Default sha2_256f: 256-bit + fast sign.
 
 Honest-scope: an absolute "unbreakable" does NOT exist. It defends against the harvest-now-forge-later threat on
@@ -253,7 +254,9 @@ def create_anchor(root_hex: str, key, param_name: Optional[str] = None) -> dict:
 def verify_anchor(anchor: dict, pub: Optional[Any] = None) -> bool:
     """Verify an anchor. FAIL-CLOSED on every error. Dispatch on the recorded backend ('backend',
     default 'slhdsa' for v1 anchors without the field). `pub`: hex/bytes of the expected pub (pinning); if None
-    the embedded one is used. A swapped backend or a wrong pub fail (the signature is not valid on that backend/key)."""
+    the embedded one is used. A wrong pub fails. `backend` is not in the signed body: in a v2 anchor, changing it between
+    'oqs' and 'slhdsa' does not change the verdict (same FIPS 205 pure signature, same keys); in a v1 anchor the swap
+    fails (v1 'slhdsa' is the Bare interface, v1 'oqs' is pure)."""
     try:
         if not isinstance(anchor, dict):
             return False

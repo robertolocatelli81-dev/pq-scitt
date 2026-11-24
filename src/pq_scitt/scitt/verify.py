@@ -581,7 +581,7 @@ def _main(argv=None) -> int:
     try:
         ts, pol = bytes.fromhex(a.ts_pub), bytes.fromhex(a.politica_pub)
     except ValueError:
-        print("REFUSED chiave_non_hex")
+        sx.stampa("REFUSED chiave_non_hex")
         return 2
     if (a.registro is None) != (a.sali is None):
         p.error("--registro and --sali go together")
@@ -591,25 +591,25 @@ def _main(argv=None) -> int:
         e = verifica_consistenza(a.consistenza, a.cartella, alg_statement=a.alg, alg_receipt=a.alg,
                                  chiave_ts=(a.alg, ts), chiave_politica=(a.alg, pol), revocate_esterne=a.revocata)
         if e.ok:
-            print("OK %s extends %s: %d -> %d leaves, root %s" % (a.cartella, a.consistenza, e.campi["precedente"],
+            sx.stampa("OK %s extends %s: %d -> %d leaves, root %s" % (a.cartella, a.consistenza, e.campi["precedente"],
                                                                     e.campi["attuale"], e.campi["radice"]))
             return 0
-        print("REFUSED %s %s" % (e.motivo, e.dettaglio))
+        sx.stampa("REFUSED %s %s" % (e.motivo, e.dettaglio))
         return 1
     righe = sali = None
     if a.registro is not None:
         try:
             righe, sali = strict_json.load_jsonl(a.registro), sx.leggi_sali(a.sali)
         except (strict_json.StrictJSONError, sx.ExportError, OSError) as e:
-            print("REFUSED impegno_non_valido %s" % (e if not isinstance(e, OSError) else type(e).__name__))
+            sx.stampa("REFUSED impegno_non_valido %s" % (e if not isinstance(e, OSError) else sx._non_leggibile(e)))
             return 1
     e = verifica_cartella(a.cartella, alg_statement=a.alg, alg_receipt=a.alg, chiave_ts=(a.alg, ts),
                           chiave_politica=(a.alg, pol), revocate_esterne=a.revocata, righe=righe, sali=sali)
     if e.ok:
-        print("OK %d leaves, root %s, sub %s, %s%s" % (e.campi["tree_size"], e.campi["radice"], e.campi["sub"],
+        sx.stampa("OK %d leaves, root %s, sub %s, %s%s" % (e.campi["tree_size"], e.campi["radice"], e.campi["sub"],
               e.campi["profilo"], ", commitments and chain verified with the salts" if righe is not None else ""))
         return 0
-    print("REFUSED %s %s" % (e.motivo, e.dettaglio))
+    sx.stampa("REFUSED %s %s" % (e.motivo, e.dettaglio))
     return 1
 
 

@@ -776,6 +776,18 @@ def leggi_sali(percorso: str) -> List[bytes]:
     return out
 
 
+def stampa(testo: str) -> None:
+    """print() of a refusal or an outcome. A path or argument given as non-UTF-8 bytes (a lone surrogate after
+    surrogateescape) is written as \\udcXX instead of raising UnicodeEncodeError after the work was done."""
+    codifica = getattr(sys.stdout, "encoding", None) or "utf-8"
+    print(testo.encode(codifica, "backslashreplace").decode(codifica))
+
+
+def _non_leggibile(e: OSError) -> str:
+    """Type of the error, plus its text when it is a bare OSError (not a regular file, too large: strict_json.leggi_file)."""
+    return type(e).__name__ + (": " + e.strerror if type(e) is OSError and e.strerror else "")
+
+
 def _main_estendi(p, a) -> int:
     """CLI of estendi(): three persistent keys, the policy comes from the previous export."""
     uri = (a.chiave_issuer, a.chiave_ts, a.chiave_politica)
@@ -798,14 +810,14 @@ def _main_estendi(p, a) -> int:
         if esito["sali"] is not None:
             scrivi_sali(esito["sali"], a.sali)
     except (ExportError, strict_json.StrictJSONError) as e:
-        print("REFUSED %s" % e)
+        stampa("REFUSED %s" % e)
         return 1
     except OSError as e:
-        print("REFUSED ledger not readable: %s" % type(e).__name__)
+        stampa("REFUSED ledger not readable: %s" % _non_leggibile(e))
         return 1
     scrivi_cartella(esito, a.uscita)
     c = esito["consistenza"]
-    print("extension %d -> %d leaves, root %s, consistenza.json written" % (c["precedente"]["tree_size"],
+    stampa("extension %d -> %d leaves, root %s, consistenza.json written" % (c["precedente"]["tree_size"],
                                                                                 c["attuale"]["tree_size"],
                                                                                 c["attuale"]["radice"]))
     return 0
@@ -905,7 +917,7 @@ def _main(argv=None) -> int:
                     validita[ruolo] = _intervallo(testo)
             opz = dict(versione=2, validita=validita, revocate=list(a.revocata), adesso=adesso)
         elif a.payload == "riservato":
-            print("WARNING format 1: riservato is NOT confidential against predictable ledgers: "
+            stampa("WARNING format 1: riservato is NOT confidential against predictable ledgers: "
                   "a guessed line is confirmed by its hash")
         righe = strict_json.load_jsonl(a.registro)
         esito = esporta(righe, nome=a.nome, formato=a.formato, issuer=issuer, ts=ts, politica=politica,
@@ -914,13 +926,13 @@ def _main(argv=None) -> int:
         if esito["sali"] is not None:
             scrivi_sali(esito["sali"], a.sali)
     except (ExportError, strict_json.StrictJSONError) as e:
-        print("REFUSED %s" % e)
+        stampa("REFUSED %s" % e)
         return 1
     except OSError as e:
-        print("REFUSED ledger not readable: %s" % type(e).__name__)
+        stampa("REFUSED ledger not readable: %s" % _non_leggibile(e))
         return 1
     scrivi_cartella(esito, a.uscita)
-    print("exported %d Transparent Statements, root %s" % (esito["tree_size"], esito["radice"].hex()))
+    stampa("exported %d Transparent Statements, root %s" % (esito["tree_size"], esito["radice"].hex()))
     return 0
 
 

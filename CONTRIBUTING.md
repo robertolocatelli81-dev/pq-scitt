@@ -6,7 +6,8 @@ Issues and pull requests are welcome. Security problems: see `SECURITY.md` (priv
 
 1. **Unknown input is refused with a named reason, and a test shows it.** What is refused today, and where:
    - `pq_scitt.strict_json`: repeated member names, NaN/Infinity, numbers that overflow to infinity, a BOM, lone
-     surrogates, invalid UTF-8, nesting deeper than 128 (`test_strict_json`, including 4000 random byte mutations
+     surrogates, invalid UTF-8, nesting deeper than 128, an input file that is not a regular file or is larger than
+     256 MiB (`test_strict_json`, including 4000 random byte mutations
      that may end only in a named refusal);
    - `pq-scitt verify`: unknown labels in the protected and unprotected COSE headers of statements and receipts, extra
      receipts, unknown or missing fields in the registration policy, a `sub` outside the profile
@@ -16,7 +17,8 @@ Issues and pull requests are welcome. Security problems: see `SECURITY.md` (priv
      of valid Transparent Statements, none accepted (`test_scitt.TestGenerativi.test_mutanti_rifiutati`, with a
      positive control that a verifier skipping the inclusion proof is caught);
    - `pq_scitt.kms` backend URIs: an unknown or repeated key, an empty value, an empty segment or a segment without
-     `=` (400 random URIs, `test_kms_reali.TestUriChiuso.test_generativo`).
+     `=` (400 random draws, a draw whose random key is an allowed key is skipped,
+     `test_kms_reali.TestUriChiuso.test_generativo`).
    These tests cover the cases listed; they are not a proof about every possible input. A new format or check comes
    with the same kind of test. Where a standard says what to do with unknown input (for example RFC 7519 §4 for
    unknown JWT claims), the standard is followed and the behaviour is documented.

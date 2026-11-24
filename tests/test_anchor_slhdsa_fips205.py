@@ -238,5 +238,23 @@ class TestRevisioneO3(unittest.TestCase):
         self.assertTrue(A.verify_anchor(A.create_anchor("ab" * 32, ak, param_name="sha2_128f")))
 
 
+class TestBackendNonFirmato(unittest.TestCase):
+    @unittest.skipUnless(HAVE_SLH, "slh-dsa not installed")
+    def test_scambio_backend_v2_regge_v1_no(self):
+        """The docstring said that a swapped backend fails: in v2 `backend` is not signed and the verdict does not
+        change (same FIPS 205 pure signature); in v1 the swap fails. Measured 24/11/2026, docstring corrected."""
+        self.assertNotIn("A swapped backend or a wrong pub fail", A.verify_anchor.__doc__)
+        ak = A.AnchorKey.generate("sha2_128f", "slhdsa")
+        an = A.create_anchor("ab" * 32, ak)
+        self.assertTrue(A.verify_anchor({**an, "backend": "oqs"}))
+        kp = slhdsa.KeyPair.gen(P.sha2_128f)
+        root, ts = "ab" * 32, 1762600000.25
+        body = A._canonical_body(A.SCHEMA_V1, "sha2_128f", root, ts)
+        base = {"schema": A.SCHEMA_V1, "param": "sha2_128f", "root": root, "ts": ts, "pub": kp.pub.digest().hex()}
+        self.assertTrue(A.verify_anchor({**base, "backend": "slhdsa", "sig": kp.sign(body).hex()}))
+        self.assertFalse(A.verify_anchor({**base, "backend": "oqs", "sig": kp.sign(body).hex()}))
+        self.assertTrue(A.verify_anchor({**base, "backend": "oqs", "sig": kp.sign_pure(body).hex()}))
+        self.assertFalse(A.verify_anchor({**base, "backend": "slhdsa", "sig": kp.sign_pure(body).hex()}))
+
 if __name__ == "__main__":
     unittest.main()

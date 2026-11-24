@@ -1,5 +1,7 @@
 """pq_scitt.strict_json: each refusal listed in the README comes with its named reason, valid JSON is accepted, the
 depth limit is exact, and a generative run of random mutations never raises anything but StrictJSONError."""
+import errno
+import os
 import random
 import unittest
 
@@ -59,6 +61,49 @@ class TestStrictJSON(unittest.TestCase):
             except sj.StrictJSONError as e:
                 self.assertIn(e.motivo, sj.MOTIVI)
 
+
+class TestCaccia20261124(unittest.TestCase):
+    def test_stringa_non_chiusa_lineare(self):
+        """The depth pre-scan restarted at every later quote of an unterminated string: 80 KB of \\" took 48 s."""
+        import time
+        testo = '"' + '\\"' * 20000 + "[" * 200
+        t0 = time.perf_counter()
+        with self.assertRaises(sj.StrictJSONError) as c:
+            sj.loads(testo)
+        self.assertLess(time.perf_counter() - t0, 1.5)
+        self.assertEqual(c.exception.motivo, "non_json")        # the brackets are inside the string, not depth
+        with self.assertRaises(sj.StrictJSONError) as c:          # positive control: real depth still counted
+            sj.loads('["\\"",' + "[" * 200 + "]" * 200 + "]")
+        self.assertEqual(c.exception.motivo, "troppo_profondo")
+
+    def test_leggi_file_solo_regolare_e_limitato(self):
+        import shutil
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        fifo, buono = os.path.join(d, "f"), os.path.join(d, "l.jsonl")
+        os.mkfifo(fifo)
+        with open(buono, "wb") as f:
+            f.write(b'{"a":1}\n\n{"b":2}\n')
+        import resource
+        import subprocess
+        import sys
+
+        def limite():   # 1 GiB: on the old code /dev/zero is read whole; in a child, so a FIFO cannot block the suite
+            resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+        codice = ("import sys\nfrom pq_scitt import strict_json as sj\ntry:\n sj.load_jsonl(sys.argv[1])\n"
+                  "except OSError as e:\n print('OSError', e.errno)")
+        for p in (fifo, "/dev/zero", d):
+            try:
+                r = subprocess.run([sys.executable, "-B", "-c", codice, p], capture_output=True, text=True, timeout=30,
+                                   preexec_fn=limite)
+            except subprocess.TimeoutExpired:
+                self.fail("load_jsonl(%r) blocked" % p)
+            self.assertEqual((r.returncode, r.stdout), (0, "OSError %d\n" % errno.EINVAL), (p, r.stderr[-200:]))
+        with self.assertRaises(OSError) as c:
+            sj.leggi_file(buono, 3)
+        self.assertEqual(c.exception.errno, errno.EFBIG)
+        self.assertEqual(sj.load_jsonl(buono), [{"a": 1}, {"b": 2}])   # positive control
 
 if __name__ == "__main__":
     unittest.main()

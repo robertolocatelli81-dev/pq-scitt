@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pq-scitt · pq_scitt/ledger/verify.py — Standalone ledger verifier (auditor-grade)
+pq-scitt · pq_scitt/ledger/verify.py — Standalone ledger verifier
 =============================================================================
 
 Independently verifies a hash-chained ledger (`*.jsonl`) using only stdlib (hashlib, json,
@@ -65,9 +65,9 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 try:
-    from pq_scitt.strict_json import loads_object as _strict_object
+    from pq_scitt.strict_json import leggi_file as _read_regular, loads_object as _strict_object
 except ImportError:   # origin branch: here it is the same import
-    from pq_scitt.strict_json import loads_object as _strict_object
+    from pq_scitt.strict_json import leggi_file as _read_regular, loads_object as _strict_object
 
 GENESIS_PREV = "0" * 64
 SUPPORTED_ALGOS = ("sha256", "sha3_256")
@@ -149,7 +149,9 @@ def _generic_recompute_verify(entries: List[Dict], started: str, path: str) -> O
     link_failures = []
     prev = GENESIS_PREV
     for i, e in enumerate(entries):
-        if i > 0 and e.get(pk) not in (prev, None):
+        # entry 0 too: its prev must be the genesis (or absent); before, cutting the HEAD of the ledger (a partial
+        # edit, no hash recomputed) was PASS in this mode (caccia 24/11/2026)
+        if e.get(pk) not in (prev, None):
             link_failures.append(i)
         prev = e.get(hk)
     passed = (not hash_failures) and (not link_failures)
@@ -246,7 +248,8 @@ def _with_parse_errors(receipt: Dict, errors: List[Dict]) -> Dict:
 
 def _tip_hmac(key, count: int, tip: str) -> str:
     """HMAC-SHA256(key, "count:tip") — keyed anchor against forge+rechain. `key` str or bytes."""
-    kb = key.encode() if isinstance(key, str) else bytes(key)
+    # surrogateescape: a key given on the command line as non-UTF-8 bytes is those bytes, not a UnicodeEncodeError
+    kb = key.encode("utf-8", "surrogateescape") if isinstance(key, str) else bytes(key)
     return hmac.new(kb, f"{count}:{tip}".encode(), hashlib.sha256).hexdigest()
 
 
@@ -265,8 +268,7 @@ def _load_checkpoint_anchor(cp_path: str, trusted_pub_hex: Optional[str] = None,
                of the identity)."""
     meta: Dict = {"checkpoint_path": cp_path, "count": None, "last_hash": None, "sig_verified": None}
     try:
-        with open(cp_path, "rb") as f:
-            cp = _strict_object(f.read())
+        cp = _strict_object(_read_regular(cp_path))   # a FIFO blocked, /dev/zero exhausted the memory
     except (OSError, ValueError) as e:   # ValueError: also the strict reader's rejection, with a reason
         meta["sig_verified"] = False
         meta["error"] = f"checkpoint unreadable: {str(e)[:80]}"
@@ -378,7 +380,8 @@ def _eval_anchor(entries: List[Dict], expect_count, expect_tip, hmac_key, expect
             computed = _tip_hmac(hmac_key, observed_count, observed_tip)
             checks["hmac_computed"] = computed
             checks["hmac_expected"] = expect_hmac
-            if not hmac.compare_digest(computed, expect_hmac):
+            # bytes: compare_digest on a str with a non-ASCII character raised TypeError (a traceback, no receipt)
+            if not hmac.compare_digest(computed.encode(), str(expect_hmac).encode("utf-8", "surrogateescape")):
                 failed.append("tip HMAC does not match (forge+rechain or truncation without the key)")
 
     return {"checks": checks, "failed": failed, "anchor_ok": len(failed) == 0}
@@ -438,14 +441,18 @@ def verify_ledger(path: str, algo: Optional[str] = None, *,
                            "reason": "checkpoint_assente: key or --checkpoint-tofu without --checkpoint"}
 
     try:
-        with open(path, "rb") as f:   # bytes: a non-UTF-8 byte is a rejected line, not a verifier crash
-            raw_lines = [ln for ln in f.read().splitlines() if ln.strip()]
+        # bytes: a non-UTF-8 byte is a rejected line, not a verifier crash; regular file only, bounded (a FIFO blocked,
+        # /dev/zero exhausted the memory, a directory was a traceback: caccia 24/11/2026)
+        raw_lines = [ln for ln in _read_regular(path).splitlines() if ln.strip()]
     except FileNotFoundError:
         anchor = _eval_anchor([], expect_count, expect_tip, hmac_key, expect_hmac, checkpoint_meta)
         r = {"verdict": "FILE_NOT_FOUND", "path": path, "verified_utc": started}
         if anchor is not None:
             r["anchor"] = anchor
         return r
+    except OSError as e:
+        return {"verdict": "FAIL", "path": path, "verified_utc": started, "entries_count": 0,
+                "parse_errors": [{"line": -1, "error": f"unreadable: {type(e).__name__}: {e.strerror or e}"}]}
 
     if not raw_lines:   # empty (also truncated to zero bytes) like absent: nothing to verify is not a PASS (review 08/11)
         anchor = _eval_anchor([], expect_count, expect_tip, hmac_key, expect_hmac, checkpoint_meta)
@@ -534,7 +541,7 @@ def verify_ledger(path: str, algo: Optional[str] = None, *,
     # Idx monotonicity
     idx_ok = True
     for i, e in enumerate(entries):
-        if e.get("idx") != i:
+        if type(e.get("idx")) is not int or e.get("idx") != i:   # true == 1 and 1.0 == 1 in Python: not an idx
             idx_ok = False
             errors.append({"line": i, "error": f"idx_mismatch: expected {i}, got {e.get('idx')}"})
 
@@ -574,7 +581,8 @@ def verify_ledger(path: str, algo: Optional[str] = None, *,
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="pq-scitt verify-ledger",
-        description="Independent verification of a hash-chained .jsonl ledger (auditor-grade, stdlib-only).",
+        description="Independent verification of a hash-chained .jsonl ledger (Python standard library; the "
+                    "signed --checkpoint also needs cryptography).",
     )
     parser.add_argument("ledger_path", help="Path of the .jsonl file to verify")
     parser.add_argument(
@@ -612,8 +620,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                             checkpoint_allow_untrusted=args.checkpoint_tofu)
 
     if args.out:
-        with open(args.out, "w") as f:
-            json.dump(receipt, f, indent=2, default=str)
+        try:
+            with open(args.out, "w") as f:
+                json.dump(receipt, f, indent=2, default=str)
+        except OSError as e:   # a directory, no permission: an error with its reason, not a traceback
+            sys.stderr.write(f"pq-scitt verify-ledger: receipt not written to --out: {type(e).__name__}\n")
+            return 1
 
     if args.quiet:
         print(receipt["verdict"])

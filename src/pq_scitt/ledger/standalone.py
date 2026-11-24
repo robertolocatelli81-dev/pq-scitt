@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pq-scitt - standalone ledger verifier (auditor-grade)
+pq-scitt - standalone ledger verifier
 =====================================================
 
 SPDX-License-Identifier: Apache-2.0
@@ -49,10 +49,13 @@ if __name__ == "__main__":   # 0.20.3: run as a command, never write the bytecod
                 return self.source_to_code(self.get_data(path), path)
         _L0210.get_code = _get_code_0210
 import argparse
+import errno
 import hashlib
+import io
 import json
 import os
 import re
+import stat
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -709,7 +712,21 @@ def verify_ledger(path: str, algo: Optional[str] = None, tip: Optional[str] = No
         # ONE line rule in the five verifiers (review 16/09 r5): lines are separated by LF only (no universal
         # newlines: a lone CR is data inside the line, hence a decode error), and a line is blank when it holds
         # nothing but ASCII space / tab / CR — never Unicode whitespace (str.strip() took U+00A0).
-        with open(path, encoding="utf-8", errors="surrogateescape", newline="\n") as f:
+        # regular file only, opened without blocking and read up to the bound (a FIFO blocked forever, /dev/zero
+        # exhausted the memory: caccia 24/11/2026; cryptovalid-opencore reads its input the same way since 0.26.0)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError(errno.EINVAL, "not a regular file")
+            fh, fd = os.fdopen(fd, "rb"), -1
+            with fh:
+                data = fh.read(MAX_INPUT_BYTES + 1)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+        if len(data) > MAX_INPUT_BYTES:
+            raise OSError(errno.EFBIG, "input_too_large")
+        with io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", errors="surrogateescape", newline="\n") as f:
             raw_lines = [ln for ln in f if ln.strip(" \t\r\n")]
     except FileNotFoundError:
         return {
@@ -719,7 +736,8 @@ def verify_ledger(path: str, algo: Optional[str] = None, tip: Optional[str] = No
         }
     except OSError as e:   # a directory, a permission error: a receipt, never a traceback
         return {"verdict": "FAIL", "path": path, "verified_utc": started, "entries_count": 0,
-                "parse_errors": [{"line": -1, "error": f"unreadable: {type(e).__name__}"}]}
+                "parse_errors": [{"line": -1, "error": f"unreadable: {type(e).__name__}"
+                                                       + (f": {e.strerror}" if type(e) is OSError else "")}]}
 
     entries: List[Dict] = []
     for i, line in enumerate(raw_lines):
@@ -929,7 +947,7 @@ def verify_ledger(path: str, algo: Optional[str] = None, tip: Optional[str] = No
 def main(argv: Optional[List[str]] = None) -> int:
     parser = Parser(allow_abbrev=False, 
         prog="pq-scitt verify-ledger-standalone",
-        description="Independent verification of a hash-chained .jsonl ledger (auditor-grade, stdlib-only).",
+        description="Independent verification of a hash-chained .jsonl ledger (Python standard library only).",
     )
     parser.add_argument("ledger_path", help="Path of the .jsonl file to verify")
     parser.add_argument(

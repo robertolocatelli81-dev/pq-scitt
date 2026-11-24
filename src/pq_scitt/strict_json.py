@@ -17,18 +17,24 @@ from __future__ import annotations
 
 import base64
 import binascii
+import errno
 import json
 import math
+import os
 import re
+import stat
 from typing import Any, Optional, Union
 
 MAX_DEPTH = 128
+MAX_FILE = 256 * 1024 * 1024   # bytes of one input file (a ledger, a salts file, a checkpoint)
 
 MOTIVI = ("tipo_ingresso", "non_utf8", "bom", "non_json", "membro_ripetuto", "costante_non_json", "numero_non_finito",
           "troppo_profondo", "surrogato_solitario", "non_oggetto", "base64_non_canonico", "lunghezza_errata",
           "testa_illeggibile")
 
-_TOKEN = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[\[\]{}]', re.S)
+# the closing quote is optional: an unterminated string ends the scan in one pass (with a required quote every later
+# quote restarted it: 80 KB of \" took 48 s, caccia 24/11/2026)
+_TOKEN = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"?|[\[\]{}]', re.S)
 _ESCAPE_SURROGATO = re.compile(r"\\u[dD][89a-fA-F]")
 _SURROGATO = re.compile("[\ud800-\udfff]")
 
@@ -130,11 +136,30 @@ def loads_object(dati, *, max_depth: int = MAX_DEPTH) -> dict:
     return obj
 
 
+def leggi_file(percorso, limite: int = MAX_FILE) -> bytes:
+    """The bytes of a REGULAR file of at most `limite` bytes, opened without blocking. A FIFO blocked the readers
+    forever and /dev/zero exhausted the memory (caccia 24/11/2026): not a regular file or too large = OSError
+    (EINVAL / EFBIG), like the other "not readable" outcomes, which go to the caller."""
+    fd = os.open(percorso, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", percorso)
+        f, fd = os.fdopen(fd, "rb"), -1
+        with f:
+            dati = f.read(limite + 1)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if len(dati) > limite:
+        raise OSError(errno.EFBIG, "file larger than %d bytes" % limite, percorso)
+    return dati
+
+
 def load_jsonl(percorso) -> list:
     """The non-empty lines of a .jsonl file, all objects. A bad line = StrictJSONError with the line number.
-    FileNotFoundError goes to the caller: "missing" is an outcome distinct from "broken"."""
-    with open(percorso, "rb") as f:
-        dati = f.read()
+    FileNotFoundError goes to the caller: "missing" is an outcome distinct from "broken"; so does any other OSError
+    (not a regular file, larger than MAX_FILE: `leggi_file`)."""
+    dati = leggi_file(percorso)
     righe = []
     for n, riga in enumerate(dati.splitlines(), 1):
         if not riga.strip():

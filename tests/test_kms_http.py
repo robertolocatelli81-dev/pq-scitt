@@ -49,5 +49,21 @@ class TestUriAndHonesty(unittest.TestCase):
         self.assertTrue(hasattr(k, "AwsKmsHttpBackend"))
 
 
+class TestNetHsmRispostaMalformata(unittest.TestCase):
+    def test_risposta_senza_chiave_o_firma(self):
+        """A NetHSM answer without public.data / signature was a KeyError traceback: now a RuntimeError, like Vault."""
+        import io
+        from unittest import mock
+        os.environ["NETHSM_PASS_T"] = "x"
+        self.addCleanup(os.environ.pop, "NETHSM_PASS_T", None)
+        b = k.NetHsmBackend(url="https://127.0.0.1:1", key="k", user="u", pass_env="NETHSM_PASS_T")
+        for corpo in (b"{}", b'{"public": 5}', b'{"signature": 7}', b"[]"):
+            risposta = mock.MagicMock()
+            risposta.__enter__.return_value = io.BytesIO(corpo)
+            with mock.patch("urllib.request.urlopen", return_value=risposta):
+                for f in (b.public_key_hex, lambda: b.sign(b"m")):
+                    with self.assertRaises(RuntimeError, msg=corpo):
+                        f()
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

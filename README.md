@@ -7,13 +7,15 @@ Transparent Statements, with post-quantum options (ML-DSA-65 signatures, SLH-DSA
   infinity, a BOM, lone surrogates, invalid UTF-8 and nesting deeper than 128 are refused with a named reason.
 - `pq_scitt.ledger.verify` (`pq-scitt verify-ledger`): verifies a hash-chained JSONL ledger (`self_hash` = SHA-256 or
   SHA3-256 of the canonical JSON of the entry, `prev_hash` = the previous `self_hash`) and prints a JSON receipt.
+  The entry schema is open: other keys are hashed, not refused (`verify-ledger-standalone` refuses them). Ledgers
+  without `idx` are checked by a generic hash recompute, or by linkage only (verdict `LINKED`, not `PASS`).
   Optional out-of-band anchors: expected entry count, expected tip, HMAC of the tip, signed checkpoint.
 - `pq_scitt.ledger.standalone` (`pq-scitt verify-ledger-standalone`): a ledger verifier that needs only the Python
   standard library (from cryptovalid-opencore, same author).
 - `pq_scitt.scitt.export`, `pq_scitt.scitt.verify`, `pq_scitt.scitt.cbor` (`pq-scitt export`, `pq-scitt verify`):
   export such a ledger as IETF SCITT Transparent Statements (COSE_Sign1, RFC 9943) with RFC 9162 Merkle inclusion
   proofs in the receipts (RFC 9942), and verify an export with a closed verifier. Algorithms: Ed25519 (-19, RFC 9864),
-  EdDSA (-8, interop mode), ML-DSA-65 (-49, RFC 9964). Profile 2 adds a signed issue time, key validity windows,
+  EdDSA (-8, interop mode; marked Deprecated in the IANA COSE Algorithms registry by RFC 9864), ML-DSA-65 (-49, RFC 9964). Profile 2 adds a signed issue time, key validity windows,
   revoked key ids, per-entry salted commitments and RFC 9162 consistency proofs between two exports.
 - `pq_scitt.ed25519_keys`, `pq_scitt.ed25519_order`: refuse Ed25519 public keys and signature R values of small
   order, keys outside the prime-order subgroup and non-canonical encodings (RFC 8032 §5.1.3), before the signature
@@ -35,16 +37,17 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
 
 ## Status
 
-- **First release**: version 0.1.0, not yet published on PyPI. Extracted on 2026-11-08 from a larger private code base
+- **First release**: version 0.1.0, a GitHub release (12 November 2026: wheel, sdist, SHA256SUMS), not on PyPI. Extracted on 2026-11-08 from a larger private code base
   by the same author.
 - **One maintainer** (Roberto Locatelli). No independent review outside the author's own process yet.
-- **Tests**, measured on 2026-11-08 on Linux x86-64 in clean virtual environments, against the **installed wheel**
+- **Tests** of version 0.1.0, measured on 2026-11-08 on Linux x86-64 in clean virtual environments, against the **installed wheel**
   (dependencies from `requirements/ci.txt`): Python 3.10.22, 3.11.2, 3.12.15, 3.13.15 and 3.14.8, each 243 unittest
   tests run, 0 failed, 1 skipped, plus `test_verify_ledger.py` 3/3. Same result on 3.12 from the unpacked sdist.
   The skip: one SLH-DSA test needs `liboqs-python`. SoftHSM2, `pkcs11-tool` and podman with the Vault image were
   installed, so the 21 real-backend tests in `tests/test_kms_reali.py` ran; without them those 21 skip (measured on
   3.12: 243 run, 0 failed, 22 skipped). On the public CI (GitHub Actions `ubuntu-24.04`, no SoftHSM2 or podman) the
-  result is 243 run, 0 failed, 22 skipped on Python 3.10 to 3.14 (first CI run, 8 November 2026). The tests of the `chain` event format use
+  result is 243 run, 0 failed, 22 skipped on Python 3.10 to 3.14 (the two CI runs on `main` of 8 November 2026,
+  commits 4bf24e9 and 9692a74). The tests of the `chain` event format use
   events produced by the original implementation of that format, frozen in `tests/data/chain_events.json`.
 - **Conformance measurements** that can be repeated from this repository (run from `tests/`, package installed):
 

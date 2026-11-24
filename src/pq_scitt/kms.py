@@ -107,9 +107,10 @@ class FileKeyBackend:
         # cache: a single read (avoids N reads + TOCTOU halfway through a ledger)
         if self._cached is None:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-            with open(self._path, encoding="utf-8") as f:
-                self._cached = Ed25519PrivateKey.from_private_bytes(
-                    bytes.fromhex(f.read().strip()))
+            from pq_scitt.strict_json import leggi_file
+            # regular file, at most 64 KiB, opened without blocking (a FIFO blocked, /dev/zero exhausted the memory)
+            self._cached = Ed25519PrivateKey.from_private_bytes(
+                bytes.fromhex(leggi_file(self._path, 64 * 1024).decode("utf-8").strip()))
         return self._cached
 
     def public_key_hex(self) -> str:
@@ -811,13 +812,20 @@ class NetHsmBackend:
 
     def public_key_hex(self) -> str:
         d = self._req("GET", f"keys/{self._key}")
-        return _raw_from_spki(base64.b64decode(d["public"]["data"])).hex()
+        try:   # a malformed answer = one readable RuntimeError, as for Vault and AWS (was a KeyError traceback)
+            return _raw_from_spki(base64.b64decode(d["public"]["data"])).hex()
+        except (KeyError, TypeError, ValueError) as e:
+            raise RuntimeError(f"NetHSM key {self._key!r}: answer without an Ed25519 public key "
+                               f"({type(e).__name__})") from None
 
     def sign(self, message: bytes) -> bytes:
         d = self._req("POST", f"keys/{self._key}/sign",
                       {"mode": "EdDSA",
                        "message": base64.b64encode(message).decode()})
-        sig = base64.b64decode(d["signature"])
+        try:
+            sig = base64.b64decode(d["signature"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise RuntimeError(f"NetHSM Sign: answer without a signature ({type(e).__name__})") from None
         if len(sig) != 64:
             raise RuntimeError(f"expected 64-byte Ed25519 signature, got {len(sig)}")
         return sig

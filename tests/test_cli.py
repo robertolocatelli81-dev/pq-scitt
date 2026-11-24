@@ -150,5 +150,81 @@ class TestPuntiDiIngresso(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
 
 
+class TestCacciaInputSpeciali(unittest.TestCase):
+    """caccia 24/11/2026: a FIFO blocked every reader of a ledger, /dev/zero exhausted the memory, a directory or a
+    non-UTF-8 name was a traceback. Each command must answer with a refusal, in bounded time and memory."""
+
+    def _cli(self, *argv, env=None):
+        import resource
+        def limite():   # 1 GiB of address space: /dev/zero read whole fails fast instead of taking the machine
+            resource.setrlimit(resource.RLIMIT_AS, (1 << 30, 1 << 30))
+        e = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+        e.update(env or {})
+        try:
+            r = subprocess.run([sys.executable, "-B", "-m", "pq_scitt"] + list(argv), capture_output=True, timeout=30,
+                               env=e, preexec_fn=limite)
+        except subprocess.TimeoutExpired:
+            self.fail("%s blocked (30 s)" % (argv,))
+        self.assertNotIn(b"Traceback", r.stderr, (argv, r.stderr[-300:]))
+        return r
+
+    def test_fifo_zero_cartella(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        fifo, buono = os.path.join(d, "fifo"), _registro(d)
+        os.mkfifo(fifo)
+        for p in (fifo, "/dev/zero", d):
+            with self.subTest(p):
+                for sub in ("verify-ledger", "verify-ledger-standalone"):
+                    r = self._cli(sub, p)
+                    self.assertEqual(r.returncode, 1)
+                    self.assertIn(b'"verdict": "FAIL"', r.stdout)
+                r = self._cli("verify-ledger", buono, "--checkpoint", p, "--checkpoint-pubkey", "00" * 32)
+                self.assertEqual(r.returncode, 1)
+                self.assertIn(b"checkpoint unreadable", r.stdout)
+                r = self._cli("export", p, os.path.join(d, "u"), "--nome", "x", "--payload", "chiaro", "--effimere")
+                self.assertEqual(r.returncode, 1)
+                self.assertIn(b"REFUSED ledger not readable", r.stdout)
+                r = self._cli("verify", d, "--alg", "-19", "--ts-pub", "00", "--politica-pub", "00",
+                              "--registro", p, "--sali", buono)
+                self.assertEqual(r.returncode, 1)
+                self.assertIn(b"REFUSED impegno_non_valido", r.stdout)
+                r = self._cli("kms", "pubkey", "--backend", "file:" + p)
+                self.assertEqual(r.returncode, 1)
+                self.assertIn(b"REFUSED", r.stderr)
+        r = self._cli("verify-ledger", buono)               # positive control: the same commands still read a ledger
+        self.assertEqual(r.returncode, 0)
+
+    def test_nome_non_utf8_nel_rifiuto(self):
+        """A refusal that names a non-UTF-8 file or argument (surrogateescape) is written, not a UnicodeEncodeError."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        os.mkdir(os.path.join(os.fsencode(d), b"ts_\xff.cose"))   # first leaf, not a regular file: named in the refusal
+        uscita = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")   # errors="strict", as in a UTF-8 locale
+        with contextlib.redirect_stdout(uscita):
+            rc1 = verify._main([d, "--alg", "-19", "--ts-pub", "00" * 32, "--politica-pub", "11" * 32])
+            rc2 = export._main([_registro(d), os.path.join(d, "u"), "--nome", "x", "--payload", "chiaro",
+                                "--versione", "1", "--chiave-issuer", "\udcff:x", "--chiave-ts", "file:a",
+                                "--chiave-politica", "file:b"])
+        uscita.flush()
+        testo = uscita.buffer.getvalue().decode("utf-8")
+        self.assertEqual((rc1, rc2), (1, 1))
+        self.assertIn("REFUSED forma_cose ts_\\udcff.cose: not a regular file", testo)
+        self.assertIn("key scheme not allowed: \\udcff", testo)
+
+    def test_ancora_hmac_e_out(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        p = _registro(d)
+        for argv in (["--expect-hmac", "é", "--hmac-key", "k"], ["--expect-hmac", "aa", "--hmac-key", "\udcff"]):
+            rc, out, err = _esegui(["verify-ledger", p] + argv)
+            self.assertEqual(rc, 1, argv)
+            self.assertIn("tip HMAC does not match", out)
+        rc, out, err = _esegui(["verify-ledger", p, "--out", d])         # --out is a directory
+        self.assertEqual(rc, 1)
+        self.assertIn("receipt not written to --out: IsADirectoryError", err)
+        rc, out, err = _esegui(["verify-ledger", p, "--out", os.path.join(d, "r.json")])   # positive control
+        self.assertEqual(rc, 0)
+
 if __name__ == "__main__":
     unittest.main()
