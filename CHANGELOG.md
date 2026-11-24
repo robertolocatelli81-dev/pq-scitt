@@ -2,7 +2,8 @@
 
 ## 0.1.1 (prepared on 2026-11-24, not yet tagged)
 
-Defects of 0.1.0, all present since the initial import (4bf24e9), each with a test that fails on 0.1.0:
+Defects of 0.1.0, all present since the initial import (4bf24e9). Each fix has a test that fails on 0.1.0 on the
+system where the defect shows (the Windows and macOS ones were seen in the CI of the `ci-prova-0.1.1` branch):
 
 - A FIFO given as input blocked forever, `/dev/zero` was read whole (MemoryError traceback) and a directory was a
   traceback, in `pq-scitt verify-ledger` (ledger and `--checkpoint`), `verify-ledger-standalone`, `export`,
@@ -29,7 +30,20 @@ Defects of 0.1.0, all present since the initial import (4bf24e9), each with a te
 - `verify-ledger --out` writes the receipt as UTF-8 with LF on every system (Windows wrote CRLF).
 - `.gitattributes`: no CRLF conversion on Windows checkouts (the tests pin the sha256 of `tests/data`; the CI run of the
   `ci-prova-0.1.1` branch showed a different hash of the Wycheproof file on Windows).
-- The `verifier` field of the `verify-ledger` and `verify-ledger-standalone` receipts names the installed version.
+- `pq_scitt.kms`, PKCS#11: on Windows the ctypes structures had the default layout, while pkcs11.h packs them to 1
+  byte there; now packed (the attribute checks start from refusing values, so a template read wrongly ended in a
+  refusal, not in an accepted key). The public key was read with `pkcs11-tool --read-object --output-file`, which
+  failed on Windows (a temporary file held open) and on macOS (Homebrew's OpenSC 0.27.1 refused the point stored by
+  Homebrew's SoftHSM2 2.7.0); now it is read through the module (CKA_EC_POINT, closed: Ed25519 parameters, DER OCTET
+  STRING or the 32 raw bytes of PKCS#11 3.1). The signature ran in a thread: at the time limit the caller stopped
+  waiting, but a call hung in the module could not be stopped; now the public-key read and the signature run in a
+  child process that is killed at the limit, on every system. On Windows, `PQ_PKCS11_DLL_DIRS` lists extra folders
+  for the DLLs a module depends on.
+
+Other changes:
+
+- The `verifier` field of the `verify-ledger` and `verify-ledger-standalone` receipts names the installed version
+  (0.1.1).
 
 Texts corrected:
 
@@ -56,14 +70,23 @@ Build and CI:
   2026-11-24). HashiCorp Vault is BUSL-1.1 since 1.15 (its LICENSE, read on 2026-11-24): the tests use OpenBao, whose
   Transit API is the same. `PQ_REQUIRE_KMS` turns a missing required service into a failure, with a positive control
   in the CI and in `TestRequisitoKms`.
-- `pq_scitt.kms`: the PKCS#11 structures passed by ctypes are packed to 1 byte on Windows, as pkcs11.h requires there.
-  The public key of a PKCS#11 key is read through the module (CKA_EC_POINT, closed: Ed25519 parameters, DER OCTET
-  STRING or the 32 raw bytes of PKCS#11 3.1), no longer with `pkcs11-tool --read-object --output-file`, which failed in
-  the CI on Windows (a temporary file held open) and on macOS (Homebrew's OpenSC refused the point of SoftHSM2).
-- `pq_scitt.kms`: the PKCS#11 public-key read and signature run in a child process, killed at the time limit on every
-  system. Before (0.1.0) the signature ran in a thread: the caller stopped waiting at the limit, but a call hung in the
-  module could not be stopped; the CI on macOS showed that the time limit of the public-key read had gone with
-  pkcs11-tool. On Windows, `PQ_PKCS11_DLL_DIRS` lists extra folders for the DLLs a module depends on.
+
+Measured: CI run 45352560170 (GitHub Actions, 24 November 2026, commit c9228de, all 14 jobs green; numbers read from
+each job's log with `gh run view --job <id> --log`), the suite of `tests/` against the installed package with
+`PQ_REQUIRE_KMS=1` (SoftHSM2 + OpenSC and OpenBao 2.7.3 required, so their 21 tests in `tests/test_kms_reali.py` ran), plus
+`test_verify_ledger.py` 3/3 in every job:
+
+| Runner | Python | with `slh-dsa` | without `slh-dsa` |
+|---|---|---|---|
+| ubuntu-24.04 | 3.10.22, 3.11.18, 3.12.16, 3.13.18, 3.14.10 | 261 run, 0 failed, 1 skipped | 261 run, 0 failed, 12 skipped |
+| macos-15 (arm64) | 3.13.17 | 261 run, 0 failed, 1 skipped | 261 run, 0 failed, 12 skipped |
+| windows-2025 | 3.13.17 | 261 run, 0 failed, 2 skipped | 261 run, 0 failed, 13 skipped |
+
+Skips, from the same logs: 1 everywhere, the interoperability test that needs `liboqs-python` (not installed);
+11 more without `slh-dsa`, the tests that need it; 1 more on Windows, `test_descrittore_zero_chiuso_dopo_rifiuto`
+(no equivalent: Windows has no FIFO inside a folder and does not open a directory as a file). Backends installed:
+SoftHSM2 2.6.1-2.2ubuntu3 and OpenSC 0.25.0~rc1-1ubuntu0.2 (Ubuntu), SoftHSM2 2.7.0 and OpenSC 0.27.1 (Homebrew),
+SoftHSM2 2.7.0 built from commit 13e6e86b and OpenSC 0.27.1 (Windows); OpenBao 2.7.3 on all three.
 
 ## 0.1.0 (initial import 2026-11-08, GitHub release 2026-11-12)
 

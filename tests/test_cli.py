@@ -261,6 +261,10 @@ class TestCacciaInputSpeciali(unittest.TestCase):
         self.assertIn("receipt not written to --out: IsADirectoryError", err)
         rc, out, err = _esegui(["verify-ledger", p, "--out", os.path.join(d, "r.json")])   # positive control
         self.assertEqual(rc, 0)
+        with open(os.path.join(d, "r.json"), "rb") as f:
+            scritto = f.read()
+        self.assertNotIn(b"\r", scritto)                 # 0.1.1: LF on every system (Windows wrote CRLF)
+        self.assertEqual(json.loads(scritto)["verdict"], "PASS")
 
 class TestVersioneNelleRicevute(unittest.TestCase):
     def test_ricevute_nominano_la_versione_installata(self):

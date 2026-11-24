@@ -12,3 +12,7 @@ hang on untrusted input, a key or signature check that can be bypassed, a secret
 There is no bug bounty.
 
 Supported versions: the latest release (see `CHANGELOG.md`) and the latest commit of the default branch.
+
+Platforms the CI tests (run 45352560170, 24 November 2026, all green): Linux (`ubuntu-24.04`) with Python 3.10 to
+3.14, macOS (`macos-15`, arm64) and Windows (`windows-2025`) with Python 3.13, each with and without `slh-dsa`, with
+real SoftHSM2 and OpenBao backends. Other systems are not tested.

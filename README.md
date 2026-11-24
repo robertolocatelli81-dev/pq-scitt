@@ -52,17 +52,18 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
   result is 243 run, 0 failed, 22 skipped on Python 3.10 to 3.14 (the two CI runs on `main` of 8 November 2026,
   commits 4bf24e9 and 9692a74). The tests of the `chain` event format use
   events produced by the original implementation of that format, frozen in `tests/data/chain_events.json`.
-- **Tests of version 0.1.1**, measured on 2026-11-24 on Linux x86-64 against the installed package (dependencies from
-  `requirements/ci.txt`, SoftHSM2 and OpenSC, the official OpenBao 2.7.3 binary, `PQ_REQUIRE_KMS=1`): Python 3.11.2, 3.12.15 and
-  3.14.8, each 261 run, 0 failed, plus `test_verify_ledger.py` 3/3; 1 skipped with `slh-dsa` (it needs
-  `liboqs-python`), 12 without it. The CI (`.github/workflows/ci.yml`) runs Linux with Python 3.10 to 3.14 and macOS
-  and Windows with 3.13, each with and without `slh-dsa`; on all of them it installs SoftHSM2, OpenSC and the OpenBao
-  binary, and the real-backend tests must run (`PQ_REQUIRE_KMS=1`: a missing service fails the job). Versions: Ubuntu
-  packages and OpenBao and OpenSC (Windows MSI) pinned, SoftHSM2 on Windows built from the 2.7.0 commit; Homebrew on
-  macOS installs the current formula of `softhsm` and `opensc` (Homebrew offers no version pin for them), and the job
-  prints the version installed. On Windows the tests use the system's own means: named
-  pipes instead of FIFOs, the NUL device, ACLs instead of file modes, Git Bash's `sh`; one test has no Windows
-  equivalent and skips with the reason (a non-regular file inside a folder that can be opened).
+- **Tests of version 0.1.1**: CI run 45352560170 (24 November 2026, commit c9228de, 14 jobs; numbers read from each
+  job's log): `ubuntu-24.04` with Python 3.10.22, 3.11.18, 3.12.16, 3.13.18 and 3.14.10, `macos-15` (arm64) and
+  `windows-2025` with 3.13.17, each with and without `slh-dsa`: 261 unittest tests run, 0 failed in every job, plus
+  `test_verify_ledger.py` 3/3. Skipped: 1 with `slh-dsa` (a test that needs `liboqs-python`), 12 without it (11 more
+  tests need `slh-dsa`); on Windows 1 more, `test_descrittore_zero_chiuso_dopo_rifiuto` (no equivalent: no FIFO inside a
+  folder, and a directory cannot be opened as a file). The real backends ran in every job (`PQ_REQUIRE_KMS=1`: a
+  missing service fails it): SoftHSM2 through OpenSC's `pkcs11-tool` and a Transit server, the official OpenBao 2.7.3
+  binary (MPL-2.0; HashiCorp Vault is BUSL-1.1 since 1.15). Versions: Ubuntu packages SoftHSM2 2.6.1-2.2ubuntu3 and
+  OpenSC 0.25.0~rc1-1ubuntu0.2 (pinned); Homebrew SoftHSM2 2.7.0 and OpenSC 0.27.1 (Homebrew installs the current
+  formula, no version pin; the job prints it); on Windows SoftHSM2 2.7.0 built from its commit 13e6e86b and the OpenSC
+  0.27.1 MSI (sha256 checked); OpenBao by sha256 from its GPG-signed checksums. On Windows the tests use the system's
+  own means: named pipes instead of FIFOs, the NUL device, ACLs instead of file modes, Git Bash's `sh`.
 - **Conformance measurements** that can be repeated from this repository (run from `tests/`, package installed):
 
 | What | Measured on 2026-11-08 | Command |

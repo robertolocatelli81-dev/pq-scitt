@@ -393,9 +393,16 @@ class _Pkcs11Figlio:
     @staticmethod
     def _uccidi(scatola):
         p = scatola[0]
-        if p is not None and p.poll() is None:
+        if p is None:
+            return
+        if p.poll() is None:
             p.kill()
             p.wait()
+        for tubo in (p.stdin, p.stdout):   # the pipes too (the CI log showed ResourceWarning: unclosed file)
+            try:
+                tubo.close()
+            except (OSError, ValueError):
+                pass
 
     def _avvia(self):
         import queue
