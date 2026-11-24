@@ -2089,6 +2089,16 @@ class TestCLIVersione2(unittest.TestCase):
             self.assertEqual(sx._main([self.reg, os.path.join(self.d, "u%d" % hash(v)), "--nome", "r", "--payload",
                                        "chiaro"] + chiavi + ["--validita-issuer", v, "--validita-ts", buona,
                                                              "--validita-politica", buona]), 1, v)
+        # each field without its leading zero, alone, on fixed dates: the parser itself refuses it (the case above
+        # always has a one-digit day, so it does not tell which of the other fields would be accepted)
+        pieno, fine = "2026-01-02T03:04:05Z", "2026-12-31T23:59:59Z"
+        dal, fino = sx._intervallo(pieno + "/" + fine)
+        self.assertEqual((fino - dal, sx._intervallo(fine + "/" + pieno)), (31438554, (fino, dal)))
+        for corta in ("2026-1-02T03:04:05Z", "2026-01-2T03:04:05Z", "2026-01-02T3:04:05Z", "2026-01-02T03:4:05Z",
+                      "2026-01-02T03:04:5Z", "026-01-02T03:04:05Z"):
+            for v in (corta + "/" + fine, pieno + "/" + corta):
+                with self.assertRaises(sx.ExportError, msg=v):
+                    sx._intervallo(v)
         kid_t = sx.kid_di(bytes.fromhex(json_manifest(u)["chiavi_pubbliche_da_confrontare_fuori_banda"]["ts"][1])).hex()
         self.assertEqual(sx._main([self.reg, os.path.join(self.d, "ur"), "--nome", "r", "--payload", "chiaro",
                                    "--revocata", kid_t] + chiavi + val), 1)
