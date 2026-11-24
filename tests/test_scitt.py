@@ -2078,7 +2078,12 @@ class TestCLIVersione2(unittest.TestCase):
         self.assertEqual(sv._main([u, "--alg", "-19"] + self._pub(u)), 0)
         scaduta = (oggi - dt.timedelta(days=300)).strftime(f) + "/" + (oggi - dt.timedelta(days=1)).strftime(f)
         lunga = (oggi - dt.timedelta(days=1)).strftime(f) + "/" + (oggi + dt.timedelta(days=366)).strftime(f)
-        senza_zeri = (oggi - dt.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ").replace("-0", "-").replace("T0", "T")
+        # a start day of month below 10, so that dropping the leading zero always changes the text (the old form,
+        # taken from yesterday, was the valid text itself whenever day, month and hour were 10 or more)
+        inizio = next(oggi - dt.timedelta(days=g) for g in range(1, 40) if (oggi - dt.timedelta(days=g)).day < 10)
+        senza_zeri = "%d-%d-%dT%d:%d:%dZ" % (inizio.year, inizio.month, inizio.day, inizio.hour, inizio.minute,
+                                             inizio.second)
+        self.assertNotEqual(senza_zeri, inizio.strftime(f))
         for v in (scaduta, lunga, buona.replace("Z", ""), buona + "/x", "2026-02-30T00:00:00Z/2026-03-01T00:00:00Z",
                   buona.replace("T", " "), buona + "/" + buona.split("/")[1], senza_zeri + "/" + buona.split("/")[1]):
             self.assertEqual(sx._main([self.reg, os.path.join(self.d, "u%d" % hash(v)), "--nome", "r", "--payload",
