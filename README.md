@@ -52,9 +52,9 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
   result is 243 run, 0 failed, 22 skipped on Python 3.10 to 3.14 (the two CI runs on `main` of 8 November 2026,
   commits 4bf24e9 and 9692a74). The tests of the `chain` event format use
   events produced by the original implementation of that format, frozen in `tests/data/chain_events.json`.
-- **Tests of version 0.1.1**: CI run 45352560170 (24 November 2026, commit c9228de, 14 jobs; numbers read from each
+- **Tests of version 0.1.1**: CI run 45369158453 (24 November 2026, commit 61ab771, 14 jobs; numbers read from each
   job's log): `ubuntu-24.04` with Python 3.10.22, 3.11.18, 3.12.16, 3.13.18 and 3.14.10, `macos-15` (arm64) and
-  `windows-2025` with 3.13.17, each with and without `slh-dsa`: 261 unittest tests run, 0 failed in every job, plus
+  `windows-2025` with 3.13.17, each with and without `slh-dsa`: 266 unittest tests run, 0 failed in every job, plus
   `test_verify_ledger.py` 3/3. Skipped: 1 with `slh-dsa` (a test that needs `liboqs-python`), 12 without it (11 more
   tests need `slh-dsa`); on Windows 1 more, `test_descrittore_zero_chiuso_dopo_rifiuto` (no equivalent: no FIFO inside a
   folder, and a directory cannot be opened as a file). The real backends ran in every job (`PQ_REQUIRE_KMS=1`: a

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 (prepared on 2026-11-24, not yet tagged)
+## 0.1.1 (2026-11-24)
 
 Defects of 0.1.0, all present since the initial import (4bf24e9). Each fix has a test that fails on 0.1.0 on the
 system where the defect shows (the Windows and macOS ones were seen in the CI of the `ci-prova-0.1.1` branch):
@@ -76,16 +76,16 @@ Build and CI:
   Transit API is the same. `PQ_REQUIRE_KMS` turns a missing required service into a failure, with a positive control
   in the CI and in `TestRequisitoKms`.
 
-Measured: CI run 45352560170 (GitHub Actions, 24 November 2026, commit c9228de, all 14 jobs green; numbers read from
+Measured: CI run 45369158453 (GitHub Actions, 24 November 2026, commit 61ab771, all 14 jobs green; numbers read from
 each job's log with `gh run view --job <id> --log`), the suite of `tests/` against the installed package with
 `PQ_REQUIRE_KMS=1` (SoftHSM2 + OpenSC and OpenBao 2.7.3 required, so their 21 tests in `tests/test_kms_reali.py` ran), plus
 `test_verify_ledger.py` 3/3 in every job:
 
 | Runner | Python | with `slh-dsa` | without `slh-dsa` |
 |---|---|---|---|
-| ubuntu-24.04 | 3.10.22, 3.11.18, 3.12.16, 3.13.18, 3.14.10 | 261 run, 0 failed, 1 skipped | 261 run, 0 failed, 12 skipped |
-| macos-15 (arm64) | 3.13.17 | 261 run, 0 failed, 1 skipped | 261 run, 0 failed, 12 skipped |
-| windows-2025 | 3.13.17 | 261 run, 0 failed, 2 skipped | 261 run, 0 failed, 13 skipped |
+| ubuntu-24.04 | 3.10.22, 3.11.18, 3.12.16, 3.13.18, 3.14.10 | 266 run, 0 failed, 1 skipped | 266 run, 0 failed, 12 skipped |
+| macos-15 (arm64) | 3.13.17 | 266 run, 0 failed, 1 skipped | 266 run, 0 failed, 12 skipped |
+| windows-2025 | 3.13.17 | 266 run, 0 failed, 2 skipped | 266 run, 0 failed, 13 skipped |
 
 Skips, from the same logs: 1 everywhere, the interoperability test that needs `liboqs-python` (not installed);
 11 more without `slh-dsa`, the tests that need it; 1 more on Windows, `test_descrittore_zero_chiuso_dopo_rifiuto`
