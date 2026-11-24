@@ -105,5 +105,23 @@ class TestLimiteDiTempoPkcs11(unittest.TestCase):
         self.assertIn("ended", str(c.exception))
 
 
+class TestLayoutPkcs11(unittest.TestCase):
+    def test_strutture_come_pkcs11_h(self):
+        """CK_ATTRIBUTE and CK_MECHANISM as pkcs11.h lays them out: packed to 1 byte on Windows (CK_ULONG 4 bytes +
+        pointer 8 + CK_ULONG 4 = 16 on Win64), natural alignment elsewhere (24 on LP64). Checked against the sizes
+        ctypes gives for the same fields, so a change of packing is seen on every system."""
+        import ctypes
+        a, m = k._p11_strutture()
+        u, p = ctypes.sizeof(ctypes.c_ulong), ctypes.sizeof(ctypes.c_void_p)
+        atteso = 2 * u + p if os.name == "nt" else ctypes.sizeof(
+            type("N", (ctypes.Structure,), {"_fields_": [("a", ctypes.c_ulong), ("b", ctypes.c_void_p),
+                                                         ("c", ctypes.c_ulong)]}))
+        self.assertEqual((ctypes.sizeof(a), ctypes.sizeof(m)), (atteso, atteso))
+        self.assertEqual((a.pValue.offset, a.ulValueLen.offset), (u, u + p) if os.name == "nt" else
+                         (a.pValue.offset, a.ulValueLen.offset))
+        if os.name == "nt":
+            self.assertEqual((u, ctypes.sizeof(a)), (4, 16))    # Win64: CK_ULONG is 4 bytes, the attribute 16
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -384,12 +384,10 @@ print("OK" if not cattivi else "BAD %r" % cattivi[:5])
         """Ed25519 pair in the token with chosen CKA_SENSITIVE/CKA_SIGN (pkcs11-tool 0.23 cannot clear them)."""
         import ctypes
         ul, lib = ctypes.c_ulong, ctypes.CDLL(MODULO)
-
-        class A(ctypes.Structure):
-            _fields_ = [("t", ul), ("p", ctypes.c_void_p), ("n", ul)]
-
-        class M(ctypes.Structure):
-            _fields_ = [("m", ul), ("p", ctypes.c_void_p), ("n", ul)]
+        # the structures of the package (0.1.1): packed to 1 byte on Windows as pkcs11.h requires. With the default
+        # layout of this helper (24 bytes per CK_ATTRIBUTE on Win64 instead of 16) SoftHSM2 read the template wrongly
+        # and C_GenerateKeyPair answered CKR_TEMPLATE_INCOMPLETE (0xd0) in CI run 45349781989
+        A, M = kms._p11_strutture()
         for f in ("C_Initialize", "C_GetSlotList", "C_GetTokenInfo", "C_OpenSession", "C_Login", "C_GenerateKeyPair",
                   "C_CloseSession", "C_Finalize"):
             getattr(lib, f).restype = ul
