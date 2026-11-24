@@ -50,10 +50,11 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
   commits 4bf24e9 and 9692a74). The tests of the `chain` event format use
   events produced by the original implementation of that format, frozen in `tests/data/chain_events.json`.
 - **Tests of version 0.1.1**, measured on 2026-11-24 on Linux x86-64 against the installed package (dependencies from
-  `requirements/ci.txt`): Python 3.11.2, 3.12.15 and 3.14.8, each 257 run, 0 failed, plus `test_verify_ledger.py` 3/3;
-  9 skipped with `slh-dsa` (8 Vault tests: the Vault image was not available to the measuring user; 1 needs
-  `liboqs-python`), 20 skipped without it. The CI (`.github/workflows/ci.yml`) runs Linux with Python 3.10 to 3.14 and
-  macOS and Windows with 3.13, each with and without `slh-dsa`. On Windows the tests use the system's own means: named
+  `requirements/ci.txt`, SoftHSM2 and OpenSC, OpenBao 2.7.3 in podman, `PQ_REQUIRE_KMS=1`): Python 3.11.2, 3.12.15 and
+  3.14.8, each 258 run, 0 failed, plus `test_verify_ledger.py` 3/3; 1 skipped with `slh-dsa` (it needs
+  `liboqs-python`), 12 without it. The CI (`.github/workflows/ci.yml`) runs Linux with Python 3.10 to 3.14 and macOS
+  and Windows with 3.13, each with and without `slh-dsa`; it installs SoftHSM2 and OpenSC on Linux and macOS and
+  OpenBao on Linux, and there the real-backend tests must run (`PQ_REQUIRE_KMS`: a missing service fails the job). On Windows the tests use the system's own means: named
   pipes instead of FIFOs, the NUL device, ACLs instead of file modes, Git Bash's `sh`; one test has no Windows
   equivalent and skips with the reason (a non-regular file inside a folder that can be opened).
 - **Conformance measurements** that can be repeated from this repository (run from `tests/`, package installed):
@@ -138,8 +139,12 @@ the verifier must get the transparency-service and policy keys **out of band** (
   `pq-scitt export --estendi`, which first verifies the previous export); signing goes through `cryptography` or a
   KMS/HSM backend and never passes a private key or another secret to it.
 - Not tested in this repository: AWS KMS and NetHSM against real services (the AWS SigV4 signing key is checked against
-  AWS's published test vector); YubiHSM hardware. `tests/test_kms_reali.py` runs SoftHSM2 and a Vault dev server only
-  when `softhsm2`/`pkcs11-tool` and `podman` with the Vault image are installed, otherwise it skips.
+  AWS's published test vector); YubiHSM hardware. `tests/test_kms_reali.py` runs SoftHSM2 (through OpenSC's
+  `pkcs11-tool`) and a Transit dev server (OpenBao, MPL-2.0, API of Vault Transit; `PQ_VAULT_IMAGE` can name a Vault
+  image) in podman or docker; where they are missing it skips, unless `PQ_REQUIRE_KMS` names them. Not on Windows:
+  SoftHSM2 publishes no Windows build (the only binary build, disig/SoftHSM2-for-Windows, is 2.5.0 of 2018) and the
+  Windows runner's docker runs Windows containers only; not the Transit server on macOS (no container runtime on the
+  runner).
 - Interoperability, measured on 2026-11-08 outside this repository: an export of `examples/ledger.jsonl` with
   `--alg -8 --effimere` was verified with the independent Python library `scitt-cose` 0.5.0 (action-state-group):
   4/4 receipts (`verify_receipt`, same root as `manifest.json`) and 4/4 statement signatures

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Backends of pq_scitt/kms.py against REAL local services:
-SoftHSM2 through pkcs11-tool (token in a temporary folder, never the system one) and HashiCorp Vault Transit in a
-throwaway podman container (`vault server -dev`, port only on 127.0.0.1, removed at the end). No external network.
-Skipped with a reason if SoftHSM2/pkcs11-tool or podman/the image are missing: a skip is not a green.
+SoftHSM2 through pkcs11-tool (token in a temporary folder, never the system one) and Vault Transit (OpenBao) in a
+throwaway podman/docker container (`server -dev`, port only on 127.0.0.1, removed at the end). No external network.
+Skipped with a reason if SoftHSM2/pkcs11-tool or the container/image are missing: a skip is not a green; with
+PQ_REQUIRE_KMS the missing service is a failure. 0.1.1: the Transit server is OpenBao (MPL-2.0) in podman or docker.
 PIN and token are random, passed through the environment, never on argv and never printed."""
 import base64
 import json
@@ -33,18 +34,47 @@ from pq_scitt.scitt import export as sx  # noqa: E402
 
 kms = sx._cryptovalid_kms()
 
-MODULO = "/usr/lib/softhsm/libsofthsm2.so"
-IMMAGINE = "docker.io/hashicorp/vault:1.20"
+# 0.1.1: the module where each system installs it (PQ_SOFTHSM_MODULE overrides): Debian/Ubuntu, Homebrew on macOS
+_MODULI = ("/usr/lib/softhsm/libsofthsm2.so", "/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so",
+           "/opt/homebrew/lib/softhsm/libsofthsm2.so", "/usr/local/lib/softhsm/libsofthsm2.so")
+MODULO = os.environ.get("PQ_SOFTHSM_MODULE") or next((m for m in _MODULI if os.path.exists(m)), _MODULI[0])
+# 0.1.1: OpenBao (MPL-2.0, API of Vault Transit) instead of HashiCorp Vault, BUSL-1.1 since 1.15 (LICENSE of
+# hashicorp/vault read on 2026-11-24); image pinned by the digest of its index. PQ_VAULT_IMAGE overrides it (a Vault
+# image works the same: the tests were first measured with Vault 1.20).
+IMMAGINE = os.environ.get("PQ_VAULT_IMAGE") or (     # OpenBao 2.7.3, digest of the multi-platform index
+    "ghcr.io/openbao/openbao@sha256:ba4b133eb9586630024e71a617e66f37f29cc3534cdd46a6233e098ceded8dc9")
+CONTENITORE = os.environ.get("PQ_CONTAINER") or ("podman" if shutil.which("podman") else "docker")
 HSM_C_E = bool(shutil.which("pkcs11-tool")) and os.path.exists(MODULO)
 
 
-def _podman_c_e():
-    if not shutil.which("podman"):
+def _contenitore_c_e():
+    if not shutil.which(CONTENITORE):
         return False
-    return subprocess.run(["podman", "image", "exists", IMMAGINE], capture_output=True).returncode == 0
+    return subprocess.run([CONTENITORE, "image", "inspect", IMMAGINE], capture_output=True).returncode == 0
 
 
-PODMAN_C_E = _podman_c_e()
+PODMAN_C_E = _contenitore_c_e()
+# PQ_REQUIRE_KMS: the services that must run here ("hsm", "vault", or "1" for both). A required service that is
+# missing makes the class FAIL with the reason, never skip (the CI sets it where it installs them).
+RICHIESTI = set(os.environ.get("PQ_REQUIRE_KMS", "").replace(",", " ").split())
+if "1" in RICHIESTI:
+    RICHIESTI |= {"hsm", "vault"}
+
+
+def _servizio(nome, disponibile, motivo):
+    """skipUnless, except where PQ_REQUIRE_KMS names the service: then a missing service is a failure."""
+    if disponibile:
+        return lambda classe: classe
+    if nome not in RICHIESTI:
+        return unittest.skip(motivo)
+
+    def rompi(classe):
+        def setUpClass(cls):
+            raise RuntimeError("PQ_REQUIRE_KMS=%s but: %s" % (nome, motivo))
+        classe.setUpClass = classmethod(setUpClass)
+        classe.tearDownClass = classmethod(lambda cls: None)
+        return classe
+    return rompi
 
 
 def _righe(n):
@@ -158,7 +188,7 @@ class _Comune(unittest.TestCase):
 
 # ------------------------------------------------------------------------------------------------ SoftHSM2
 
-@unittest.skipUnless(HSM_C_E, "SoftHSM2 or pkcs11-tool missing (%s)" % MODULO)
+@_servizio("hsm", HSM_C_E, "SoftHSM2 or pkcs11-tool missing (%s)" % MODULO)
 class TestSoftHsmReale(_Comune):
     @classmethod
     def setUpClass(cls):
@@ -421,23 +451,24 @@ print("OK" if not cattivi else "BAD %r" % cattivi[:5])
 
 # ------------------------------------------------------------------------------------------------ Vault
 
-@unittest.skipUnless(PODMAN_C_E, "podman or image %s missing" % IMMAGINE)
+@_servizio("vault", PODMAN_C_E, "%s or image %s missing" % (CONTENITORE, IMMAGINE))
 class TestVaultReale(_Comune):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp(prefix="kmsreali_vault_")
         cls.TOKEN = "kr-" + secrets.token_hex(12)
         cls.SEGRETI = (cls.TOKEN,)
-        cls.ENV = {"VAULT_TOKEN": cls.TOKEN, "VAULT_DEV_ROOT_TOKEN_ID": cls.TOKEN}
+        cls.ENV = {"VAULT_TOKEN": cls.TOKEN, "VAULT_DEV_ROOT_TOKEN_ID": cls.TOKEN, "BAO_DEV_ROOT_TOKEN_ID": cls.TOKEN}
         cls.porta = _porta_libera()
         cls.nome = "kmsreali-vault-" + secrets.token_hex(4)
         cls.url = "http://127.0.0.1:%d" % cls.porta
-        r = subprocess.run(["podman", "run", "-d", "--rm", "--name", cls.nome, "-p", "127.0.0.1:%d:8200" % cls.porta,
+        r = subprocess.run([CONTENITORE, "run", "-d", "--rm", "--name", cls.nome, "-p", "127.0.0.1:%d:8200" % cls.porta,
                             "-e", "VAULT_DEV_ROOT_TOKEN_ID", "-e", "VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200",
+                            "-e", "BAO_DEV_ROOT_TOKEN_ID", "-e", "BAO_DEV_LISTEN_ADDRESS=0.0.0.0:8200",
                             "-e", "SKIP_SETCAP=1", IMMAGINE, "server", "-dev"],
                            env=dict(os.environ, **cls.ENV), capture_output=True, timeout=120)
         if r.returncode:
-            raise RuntimeError("podman run failed: %s" % r.stderr[-300:])
+            raise RuntimeError("%s run failed: %s" % (CONTENITORE, r.stderr[-300:]))
         fine = time.time() + 90
         while True:
             try:
@@ -461,8 +492,8 @@ class TestVaultReale(_Comune):
     def tearDownClass(cls):
         if getattr(cls, "_env_patch", None):
             cls._env_patch.stop()
-        subprocess.run(["podman", "stop", "-t", "2", cls.nome], capture_output=True, timeout=120)
-        subprocess.run(["podman", "rm", "-f", "--ignore", cls.nome], capture_output=True, timeout=120)
+        subprocess.run([CONTENITORE, "stop", "-t", "2", cls.nome], capture_output=True, timeout=120)
+        subprocess.run([CONTENITORE, "rm", "-f", cls.nome], capture_output=True, timeout=120)
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     @classmethod
@@ -685,6 +716,26 @@ class TestUriChiuso(unittest.TestCase):
                         self.assertIn("key version 2", str(c.exception))
                     else:
                         self.assertEqual(b.sign(b"m"), sk.sign(b"m"))
+
+class TestRequisitoKms(unittest.TestCase):
+    """PQ_REQUIRE_KMS: a required service that is missing is a failure, an optional one a skip (positive control of the
+    CI rule; the CI also runs the HSM class with a module that does not exist and expects it to fail)."""
+
+    def _esito(self, richiesti, disponibile):
+        class Finto(unittest.TestCase):
+            def test_x(self):
+                pass
+        with mock.patch.object(sys.modules[__name__], "RICHIESTI", richiesti):
+            classe = _servizio("hsm", disponibile, "SoftHSM2 missing (prova)")(Finto)
+        r = unittest.TestResult()
+        unittest.TestSuite([classe("test_x")]).run(r)
+        return len(r.errors), len(r.skipped), r.testsRun
+
+    def test_richiesto_mancante_fallisce(self):
+        self.assertEqual(self._esito({"hsm"}, False)[0], 1)              # required and missing: error
+        self.assertEqual(self._esito(set(), False)[:2], (0, 1))           # optional and missing: skip
+        self.assertEqual(self._esito({"hsm"}, True), (0, 0, 1))           # present: it runs
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
