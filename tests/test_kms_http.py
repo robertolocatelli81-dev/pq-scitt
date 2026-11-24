@@ -81,5 +81,29 @@ class TestEcPointEd25519(unittest.TestCase):
                 k._ed25519_da_ec_point(punto, p)
 
 
+class TestLimiteDiTempoPkcs11(unittest.TestCase):
+    def test_chiamata_bloccata_fermata(self):
+        """0.1.1: the PKCS#11 calls run in a child process; at the time limit the child is killed, on every system.
+        Here the child hangs on purpose (it sleeps instead of answering); before, the call ran in a thread of this
+        process that the time limit could not stop."""
+        import time
+        f = k._Pkcs11Figlio(1.0)
+        f.comando = [sys.executable, "-c", "import time; time.sleep(600)"]
+        t0 = time.monotonic()
+        with self.assertRaises(RuntimeError) as c:
+            f.chiama({"op": "pub"}, "read public key")
+        self.assertIn("timeout after 1.0 s", str(c.exception))
+        self.assertLess(time.monotonic() - t0, 15)
+        self.assertIsNone(f._proc)                               # killed and dropped
+        # positive control: a child that answers is read, and a child that ends without answering is an error
+        f = k._Pkcs11Figlio(30.0)
+        f.comando = [sys.executable, "-c", "import sys; sys.stdin.readline(); print('{\"ok\": \"00ff\"}', flush=True)"]
+        self.assertEqual(f.chiama({"op": "pub"}, "x"), b"\x00\xff")
+        f.comando = [sys.executable, "-c", "import sys; sys.stdin.readline(); sys.exit(3)"]
+        with self.assertRaises(RuntimeError) as c:
+            f.chiama({"op": "pub"}, "x")
+        self.assertIn("ended", str(c.exception))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

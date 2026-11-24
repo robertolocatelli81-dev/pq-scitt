@@ -60,6 +60,10 @@ Build and CI:
   The public key of a PKCS#11 key is read through the module (CKA_EC_POINT, closed: Ed25519 parameters, DER OCTET
   STRING or the 32 raw bytes of PKCS#11 3.1), no longer with `pkcs11-tool --read-object --output-file`, which failed in
   the CI on Windows (a temporary file held open) and on macOS (Homebrew's OpenSC refused the point of SoftHSM2).
+- `pq_scitt.kms`: the PKCS#11 public-key read and signature run in a child process, killed at the time limit on every
+  system. Before (0.1.0) the signature ran in a thread: the caller stopped waiting at the limit, but a call hung in the
+  module could not be stopped; the CI on macOS showed that the time limit of the public-key read had gone with
+  pkcs11-tool. On Windows, `PQ_PKCS11_DLL_DIRS` lists extra folders for the DLLs a module depends on.
 
 ## 0.1.0 (initial import 2026-11-08, GitHub release 2026-11-12)
 

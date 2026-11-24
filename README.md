@@ -23,7 +23,10 @@ Transparent Statements, with post-quantum options (ML-DSA-65 signatures, SLH-DSA
 - `pq_scitt.anchors.slh_dsa` (`pq-scitt anchor-selftest`): long-term anchors of a hash with SLH-DSA (FIPS 205, pure
   mode, empty context).
 - `pq_scitt.kms` (`pq-scitt kms`): signing backends where the private key stays in a PKCS#11 HSM, AWS KMS, HashiCorp
-  Vault Transit or a NetHSM; backend URIs have a closed form (an unknown or repeated key is an error).
+  Vault Transit or a NetHSM; backend URIs have a closed form (an unknown or repeated key is an error). The PKCS#11
+  calls run in a child process: at the time limit of the URI (`timeout=`, default 60 s) it is killed, on Linux,
+  macOS and Windows. On Windows the DLLs a PKCS#11 module depends on must sit in the module's folder or in a folder
+  listed in `PQ_PKCS11_DLL_DIRS` (Python does not search `PATH` for them).
 
 Comments, docstrings and messages are in English. Some **stable identifiers are Italian words** and stay as they are,
 because they are part of the API or of the formats: reason codes (for example `kid_ignoto` = unknown kid,
@@ -51,7 +54,7 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
   events produced by the original implementation of that format, frozen in `tests/data/chain_events.json`.
 - **Tests of version 0.1.1**, measured on 2026-11-24 on Linux x86-64 against the installed package (dependencies from
   `requirements/ci.txt`, SoftHSM2 and OpenSC, the official OpenBao 2.7.3 binary, `PQ_REQUIRE_KMS=1`): Python 3.11.2, 3.12.15 and
-  3.14.8, each 259 run, 0 failed, plus `test_verify_ledger.py` 3/3; 1 skipped with `slh-dsa` (it needs
+  3.14.8, each 260 run, 0 failed, plus `test_verify_ledger.py` 3/3; 1 skipped with `slh-dsa` (it needs
   `liboqs-python`), 12 without it. The CI (`.github/workflows/ci.yml`) runs Linux with Python 3.10 to 3.14 and macOS
   and Windows with 3.13, each with and without `slh-dsa`; on all of them it installs SoftHSM2, OpenSC and the OpenBao
   binary, and the real-backend tests must run (`PQ_REQUIRE_KMS=1`: a missing service fails the job). Versions: Ubuntu

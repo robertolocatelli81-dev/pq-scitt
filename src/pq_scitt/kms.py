@@ -154,6 +154,20 @@ def _ed25519_da_ec_point(punto: bytes, parametri: bytes) -> bytes:
     raise ValueError("CKA_EC_POINT of %d bytes is neither 04 20 + 32 bytes nor 32 raw bytes" % len(punto))
 
 
+def _p11_carica(module: str):
+    """ctypes.CDLL of a PKCS#11 module. Windows (Python >= 3.8 does not search PATH for the dependencies of a DLL):
+    the dependencies are found in the module's own folder (ctypes loads a full path with
+    LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR) or in the folders listed in PQ_PKCS11_DLL_DIRS (os.pathsep-separated)."""
+    import ctypes
+    if os.name == "nt":
+        for d in filter(None, os.environ.get("PQ_PKCS11_DLL_DIRS", "").split(os.pathsep)):
+            os.add_dll_directory(d)
+    try:
+        return ctypes.CDLL(module)
+    except OSError as e:
+        raise RuntimeError(f"PKCS#11 module {module!r} cannot be loaded: {str(e)[:160]}") from None
+
+
 def _p11_strutture():
     """CK_ATTRIBUTE and CK_MECHANISM for ctypes. PKCS#11 2.40 §2.1 (pkcs11.h): on Windows the structures are packed to
     1 byte (#pragma pack(1)); CK_ULONG is an unsigned long there too (32 bits on Windows, 64 on LP64 Unix)."""
@@ -188,10 +202,7 @@ def _p11_sign_direct(module: str, token: str, label: str, pin: bytes, message: b
     ul = ctypes.c_ulong
     _Attr, _Mech = _p11_strutture()
 
-    try:
-        lib = ctypes.CDLL(module)
-    except OSError as e:
-        raise RuntimeError(f"PKCS#11 module {module!r} cannot be loaded: {str(e)[:120]}") from None
+    lib = _p11_carica(module)
 
     def ck(rv, what):
         if rv != 0:
@@ -273,10 +284,7 @@ def _p11_public_key(module: str, token: str, label: str) -> bytes:
     import ctypes
     ul = ctypes.c_ulong
     _Attr, _ = _p11_strutture()
-    try:
-        lib = ctypes.CDLL(module)
-    except OSError as e:
-        raise RuntimeError(f"PKCS#11 module {module!r} cannot be loaded: {str(e)[:120]}") from None
+    lib = _p11_carica(module)
 
     def ck(rv, what):
         if rv != 0:
@@ -345,9 +353,101 @@ def _p11_public_key(module: str, token: str, label: str) -> bytes:
         _P11_LOCK.release()
 
 
+def _p11_lavoratore() -> None:
+    """The child process of _Pkcs11Figlio: one JSON request per line on stdin, one JSON answer per line on stdout.
+    The PKCS#11 module runs here, so a call that hangs (or crashes the module) can be killed by the parent at its
+    time limit, on Linux, macOS and Windows alike. The PIN is read from this process's environment (inherited)."""
+    for riga in sys.stdin.buffer:
+        try:
+            r = json.loads(riga)
+            if r["op"] == "pub":
+                out = _p11_public_key(r["module"], r["token"], r["key"])
+            elif r["op"] == "sign":
+                pin = os.environ.get(r["pin_env"], "")
+                if not pin:
+                    raise RuntimeError(f"PIN environment variable {r['pin_env']!r} is empty/unset")
+                out = _p11_sign_direct(r["module"], r["token"], r["key"], pin.encode(), bytes.fromhex(r["msg"]))
+            else:
+                raise RuntimeError("unknown request")
+            risposta = {"ok": out.hex()}
+        except Exception as e:  # noqa: BLE001 — carried to the parent as one readable error
+            risposta = {"err": str(e)[:300] if isinstance(e, RuntimeError) else f"{type(e).__name__}: {str(e)[:200]}"}
+        sys.stdout.write(json.dumps(risposta) + "\n")
+        sys.stdout.flush()
+
+
+class _Pkcs11Figlio:
+    """The PKCS#11 calls of one backend, in a child process (0.1.1). The time limit of a call is enforced: at the
+    limit the child is killed (kill() = SIGKILL on POSIX, TerminateProcess on Windows) and the next call starts a new
+    one. Before, the call ran in a thread of this process: the caller stopped waiting at the limit, but the thread
+    stayed inside the module and could not be stopped. One call at a time per backend (a lock with the same limit)."""
+
+    def __init__(self, timeout: float):
+        import weakref
+        self._timeout, self._proc, self._righe = timeout, None, None
+        self._lock = threading.Lock()
+        self._scatola = [None]                       # the live child, killed when this object goes away
+        self.comando = [sys.executable, "-B", "-c", "from pq_scitt.kms import _p11_lavoratore; _p11_lavoratore()"]
+        weakref.finalize(self, _Pkcs11Figlio._uccidi, self._scatola)
+
+    @staticmethod
+    def _uccidi(scatola):
+        p = scatola[0]
+        if p is not None and p.poll() is None:
+            p.kill()
+            p.wait()
+
+    def _avvia(self):
+        import queue
+        self._proc = subprocess.Popen(
+            self.comando, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self._scatola[0] = self._proc
+        self._righe = queue.Queue()
+        out, q = self._proc.stdout, self._righe
+
+        def leggi():
+            for riga in out:
+                q.put(riga)
+            q.put(None)
+        threading.Thread(target=leggi, daemon=True).start()
+
+    def chiama(self, richiesta: dict, cosa: str) -> bytes:
+        import queue
+        import time
+        fine = time.monotonic() + self._timeout
+        if not self._lock.acquire(timeout=self._timeout):
+            raise RuntimeError(f"pkcs11 {cosa}: another PKCS#11 call of this backend is still running (timeout "
+                               f"{self._timeout} s)")
+        try:
+            if self._proc is None or self._proc.poll() is not None:
+                self._avvia()
+            try:
+                self._proc.stdin.write((json.dumps(richiesta) + "\n").encode())
+                self._proc.stdin.flush()
+                riga = self._righe.get(timeout=max(0.0, fine - time.monotonic()))
+            except queue.Empty:
+                riga = "timeout"
+            except OSError:
+                riga = None
+            if riga == "timeout" or riga is None:
+                rc = self._proc.poll()
+                _Pkcs11Figlio._uccidi([self._proc])
+                self._proc = None
+                if riga == "timeout":
+                    raise RuntimeError(f"pkcs11 {cosa}: timeout after {self._timeout} s (the call was stopped)")
+                raise RuntimeError(f"pkcs11 {cosa}: the PKCS#11 process ended (rc {rc})")
+            r = json.loads(riga)
+            if "err" in r:
+                raise RuntimeError(f"pkcs11 {cosa}: {r['err']}")
+            return bytes.fromhex(r["ok"])
+        finally:
+            self._lock.release()
+
+
 class Pkcs11Backend:
     """PKCS#11 token. Key generation via OpenSC pkcs11-tool (subprocess); public-key read (0.1.1, _p11_public_key) and
-    signing with a single-part C_Sign through the module (ctypes, see _p11_sign_direct). The private key never enters this process."""
+    signing with a single-part C_Sign through the module (ctypes, see _p11_sign_direct), both in a child process
+    with a time limit that is enforced (_Pkcs11Figlio). The private key never enters this process."""
 
     name = "pkcs11"
 
@@ -360,6 +460,7 @@ class Pkcs11Backend:
             raise RuntimeError(f"PIN environment variable {pin[4:]!r} is empty/unset")
         self._module, self._token, self._key, self._pin = module, token, key, pin
         self._timeout = timeout
+        self._figlio = _Pkcs11Figlio(timeout)
 
     def _run(self, extra, login=False, what="call"):
         cmd = ["pkcs11-tool", "--module", self._module, "--token-label", self._token]
@@ -411,35 +512,18 @@ class Pkcs11Backend:
         return self.public_key_hex()
 
     def public_key_hex(self) -> str:
-        return _p11_public_key(self._module, self._token, self._key).hex()
+        return self._figlio.chiama({"op": "pub", "module": self._module, "token": self._token, "key": self._key},
+                                   "read public key").hex()
 
     def sign(self, message: bytes) -> bytes:
-        import threading
-        pin = os.environ.get(self._pin[4:], "")
-        if not pin:
+        if not os.environ.get(self._pin[4:], ""):
             raise RuntimeError(f"PIN environment variable {self._pin[4:]!r} is empty/unset")
-        box = {}
-
-        def work():
-            if not _P11_LOCK.acquire(timeout=self._timeout):
-                box["err"] = RuntimeError("another PKCS#11 signature of this process is still running (timed out?)")
-                return
-            try:
-                box["sig"] = _p11_sign_direct(self._module, self._token, self._key, pin.encode(), bytes(message))
-            except Exception as e:  # noqa: BLE001 — carried to the caller as one readable error
-                box["err"] = e
-            finally:
-                _P11_LOCK.release()
-        t = threading.Thread(target=work, daemon=True)
-        t.start()
-        t.join(self._timeout)
-        if t.is_alive():
-            raise RuntimeError(f"pkcs11 sign: timeout after {self._timeout} s (token {self._token!r})")
-        if "err" in box:
-            e = box["err"]
-            raise RuntimeError(f"pkcs11 sign with key {self._key!r}: {e}" if isinstance(e, RuntimeError)
-                               else f"pkcs11 sign with key {self._key!r}: {type(e).__name__}: {str(e)[:200]}") from None
-        return box["sig"]
+        sig = self._figlio.chiama({"op": "sign", "module": self._module, "token": self._token, "key": self._key,
+                                   "pin_env": self._pin[4:], "msg": bytes(message).hex()},
+                                  f"sign with key {self._key!r}")
+        if len(sig) != 64:
+            raise RuntimeError(f"expected 64-byte Ed25519 signature, got {len(sig)}")
+        return sig
 
     def describe(self) -> Dict:
         return {"backend": "pkcs11", "module": self._module, "token": self._token,

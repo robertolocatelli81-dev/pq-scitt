@@ -93,7 +93,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/softhsm
-          key: softhsm2-13e6e86b83748fef74046dbf0c91f664b7acc1c3-windows-2025-x64-openssl-eddsa-v1
+          key: softhsm2-13e6e86b83748fef74046dbf0c91f664b7acc1c3-windows-2025-x64-openssl-eddsa-v2
       - name: SoftHSM2 2.7.0 from source (Windows, commit 13e6e86b, vcpkg OpenSSL)
         if: runner.os == 'Windows' && steps.softhsm-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -107,7 +107,9 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$out"
           cmake --build "$src/build" --config Release
           cmake --install "$src/build" --config Release
-          cp "$vcpkg"/installed/x64-windows/bin/*.dll "$out/lib/" 2>/dev/null || cp "$vcpkg"/installed/x64-windows/bin/*.dll "$out/bin/"
+          # the OpenSSL DLLs next to the module: Windows looks for a DLL's dependencies in its own folder
+          m=$(find "$out" -iname 'softhsm2*.dll' | head -1)
+          cp "$vcpkg"/installed/x64-windows/bin/*.dll "$(dirname "$m")/"
           find "$out" -iname '*.dll'
       - name: SoftHSM2 module and OpenSC 0.27.1 MSI (Windows, sha256 checked)
         if: runner.os == 'Windows'
