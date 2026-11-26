@@ -539,10 +539,11 @@ def _no_float(x):
 
 
 def _bounded_int(x):
-    n = int(x)
-    if abs(n) > _SAFE_INT:
-        raise ValueError(f"integer {x} outside the portable range +/-(2**53-1)")
-    return n
+    # 0.1.2: the digits are counted before int() (which read any number of them before CPython 3.10.7), and the
+    # integer is not repeated (it was, whole)
+    if len(x) - (x[:1] == "-") > 16 or abs(int(x)) > _SAFE_INT:
+        raise ValueError("an integer outside the portable range +/-(2**53-1)")
+    return int(x)
 
 
 MAX_JSON_DEPTH = 512  # normative acceptance-profile bound (spec/CONFORMANCE.md, 2026-09-13)
@@ -723,8 +724,14 @@ def verify_ledger(path: str, algo: Optional[str] = None, tip: Optional[str] = No
             if not stat.S_ISREG(os.fstat(fd).st_mode):
                 raise OSError(errno.EINVAL, "not a regular file")
             fh, fd = os.fdopen(fd, "rb"), -1
-            with fh:
-                data = fh.read(MAX_INPUT_BYTES + 1)
+            with fh:   # 0.1.2: in pieces of 1 MiB: read(bound + 1) asked the allocator for the whole bound first
+                data = bytearray()
+                while len(data) <= MAX_INPUT_BYTES:
+                    piece = fh.read(min(1 << 20, MAX_INPUT_BYTES + 1 - len(data)))
+                    if not piece:
+                        break
+                    data += piece
+                data = bytes(data)
         finally:
             if fd >= 0:
                 os.close(fd)

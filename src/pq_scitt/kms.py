@@ -68,7 +68,6 @@ import base64
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -77,7 +76,64 @@ import urllib.parse
 import urllib.request
 from typing import Dict, Optional
 
+from pq_scitt._nucleo.programs import which_absolute   # omega-nucleo-comune 0.1.0 (NOTICE)
+
 ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")  # RFC 8410 SPKI header
+
+# 0.1.2: the URL of a backend (vault url=, nethsm url=, awskms-http endpoint=) is written by `describe()` into what
+# `pq-scitt kms` prints, and was repeated by the errors. It MUST be http(s), a host and an optional port, no user
+# information (RFC 3986 section 3.2.1: "user:password" in the userinfo "is deprecated"; applications "should reject the
+# storage of such data in unencrypted form"), printable ASCII, no space or backslash. Any other is a ValueError that does
+# not repeat it.
+_URL = re.compile(r"[Hh][Tt][Tt][Pp][Ss]?://(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~-]+)(?::[0-9]{0,5})?(?:[/?#][!-\[\]-~]*)?")
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+def _backend_url(url, what: str, https_or_loopback: bool = True) -> str:
+    """The URL of a backend, checked as above; with https_or_loopback, http:// only to a loopback host."""
+    rule = (f"{what}: the URL must be http:// or https:// and a host, with an optional port, no user information "
+            "(user:password@), ASCII and without spaces: it is not repeated here")
+    if not isinstance(url, str) or len(url) > 2048 or not _URL.fullmatch(url):
+        raise ValueError(rule)
+    try:
+        u = urllib.parse.urlsplit(url)
+        u.port                                  # a port past 65535 is a ValueError here, not at the network
+    except ValueError:
+        raise ValueError(rule) from None
+    # urlsplit gives the scheme in lower case
+    if https_or_loopback and u.scheme == "http" and (u.hostname or "").lower() not in _LOOPBACK:
+        raise ValueError(f"{what}: plain http:// only to a loopback host: credentials would travel in cleartext "
+                         "(use https)")
+    return url
+
+
+def _net_reason(e: BaseException) -> str:
+    """0.1.2: what an error says of a service that could not be asked: the kinds of the errors and the errno, never
+    their text, which can carry the URL or what a library made of it."""
+    r = getattr(e, "reason", None) if isinstance(e, urllib.error.URLError) else None
+    if isinstance(r, BaseException):
+        e = r
+        pre = "URLError: "
+    else:
+        pre = ""
+    n = getattr(e, "errno", None)
+    return pre + type(e).__name__ + (f" [Errno {n}]" if isinstance(n, int) else "")
+
+
+MAX_RISPOSTA = 1 << 20   # 0.1.2: the answer of a KMS/HSM service, at most 1 MiB (it was read whole)
+
+
+def _risposta(r) -> bytes:
+    from pq_scitt.strict_json import leggi_a_pezzi
+    dati = leggi_a_pezzi(r, MAX_RISPOSTA)
+    if len(dati) > MAX_RISPOSTA:
+        raise ValueError("an answer longer than %d bytes" % MAX_RISPOSTA)
+    return dati
+
+
+def _nameable(s) -> str:
+    """0.1.2: a name an error repeats; one longer than 32 characters could be a secret put where a name goes."""
+    return repr(s) if isinstance(s, str) and len(s) <= 32 else f"(a name of {len(s)} characters, not repeated)"
 
 
 def _raw_from_spki(der_or_pem: bytes) -> bytes:
@@ -108,8 +164,11 @@ class FileKeyBackend:
             from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
             from pq_scitt.strict_json import leggi_file
             # regular file, at most 64 KiB, opened without blocking (a FIFO blocked, /dev/zero exhausted the memory)
-            self._cached = Ed25519PrivateKey.from_private_bytes(
-                bytes.fromhex(leggi_file(self._path, 64 * 1024).decode("utf-8").strip()))
+            try:   # 0.1.2: no message repeats a byte of the key file (a decoding error named one)
+                seed = bytes.fromhex(leggi_file(self._path, 64 * 1024).decode("ascii").strip())
+            except ValueError:
+                raise ValueError("file: the key file is not one 32-byte hex line") from None
+            self._cached = Ed25519PrivateKey.from_private_bytes(seed)
         return self._cached
 
     def public_key_hex(self) -> str:
@@ -353,10 +412,20 @@ def _p11_public_key(module: str, token: str, label: str) -> bytes:
         _P11_LOCK.release()
 
 
+def _env_without(name: Optional[str]) -> Dict[str, str]:
+    """0.1.2: this process's environment without the variable `name` (the PIN's): what a child that does not log in
+    gets. Windows' environment names are not case sensitive."""
+    if not name:
+        return os.environ.copy()
+    fold = (lambda k: k.upper()) if os.name == "nt" else (lambda k: k)
+    return {k: v for k, v in os.environ.items() if fold(k) != fold(name)}
+
+
 def _p11_lavoratore() -> None:
     """The child process of _Pkcs11Figlio: one JSON request per line on stdin, one JSON answer per line on stdout.
     The PKCS#11 module runs here, so a call that hangs (or crashes the module) can be killed by the parent at its
-    time limit, on Linux, macOS and Windows alike. The PIN is read from this process's environment (inherited).
+    time limit, on Linux, macOS and Windows alike. The PIN comes in the sign request on standard input (0.1.2): the
+    child is started without the variable that holds it, so neither the module nor a process it starts inherits it.
     The answers go to a private copy of standard output, and descriptor 1 is pointed at standard error: a module
     that prints on standard output cannot put a line into the protocol (NEMESIS 24/11/2026: one line printed by the
     module made every call fail, and through the API a later call got the answer of the one before)."""
@@ -367,11 +436,8 @@ def _p11_lavoratore() -> None:
             r = json.loads(riga)
             if r["op"] == "pub":
                 out = _p11_public_key(r["module"], r["token"], r["key"])
-            elif r["op"] == "sign":
-                pin = os.environ.get(r["pin_env"], "")
-                if not pin:
-                    raise RuntimeError(f"PIN environment variable {r['pin_env']!r} is empty/unset")
-                out = _p11_sign_direct(r["module"], r["token"], r["key"], pin.encode(), bytes.fromhex(r["msg"]))
+            elif r["op"] == "sign":   # 0.1.2: the PIN comes with the request, never from this process's environment
+                out = _p11_sign_direct(r["module"], r["token"], r["key"], r["pin"].encode(), bytes.fromhex(r["msg"]))
             else:
                 raise RuntimeError("unknown request")
             risposta = {"ok": out.hex()}
@@ -387,9 +453,9 @@ class _Pkcs11Figlio:
     one. Before, the call ran in a thread of this process: the caller stopped waiting at the limit, but the thread
     stayed inside the module and could not be stopped. One call at a time per backend (a lock with the same limit)."""
 
-    def __init__(self, timeout: float):
+    def __init__(self, timeout: float, pin_env: Optional[str] = None):
         import weakref
-        self._timeout, self._proc, self._righe = timeout, None, None
+        self._timeout, self._proc, self._righe, self._pin_env = timeout, None, None, pin_env
         self._lock = threading.Lock()
         self._scatola = [None]                       # the live child, killed when this object goes away
         # `python -c` puts the current directory first in sys.path: the child (which holds the PIN) would import a
@@ -417,8 +483,9 @@ class _Pkcs11Figlio:
 
     def _avvia(self):
         import queue
-        self._proc = subprocess.Popen(
-            self.comando, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self._proc = subprocess.Popen(   # 0.1.2: an explicit environment, without the PIN's variable
+            self.comando, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            env=_env_without(self._pin_env))
         self._scatola[0] = self._proc
         self._righe = queue.Queue()
         out, q = self._proc.stdout, self._righe
@@ -482,22 +549,24 @@ class Pkcs11Backend:
     name = "pkcs11"
 
     def __init__(self, module: str, token: str, key: str, pin: str = "env:CRYPTOVALID_PIN", timeout: float = 60.0):
-        if shutil.which("pkcs11-tool") is None:
-            raise RuntimeError("pkcs11-tool not found (install opensc)")
+        self._tool = which_absolute("pkcs11-tool")   # 0.1.2: never the one of the current folder
+        if self._tool is None:
+            raise RuntimeError("pkcs11-tool not found on an absolute folder of PATH (install opensc)")
         if not pin.startswith("env:"):
             raise ValueError("pin must be 'env:VARNAME' (argv PINs leak via ps)")
         if not os.environ.get(pin[4:]):
             raise RuntimeError(f"PIN environment variable {pin[4:]!r} is empty/unset")
         self._module, self._token, self._key, self._pin = module, token, key, pin
         self._timeout = timeout
-        self._figlio = _Pkcs11Figlio(timeout)
+        self._figlio = _Pkcs11Figlio(timeout, pin[4:])
 
     def _run(self, extra, login=False, what="call"):
-        cmd = ["pkcs11-tool", "--module", self._module, "--token-label", self._token]
+        cmd = [self._tool, "--module", self._module, "--token-label", self._token]
         if login:
             cmd += ["--login", "--pin", self._pin]      # pkcs11-tool reads env:VAR itself: the PIN is not on argv
-        try:
-            r = subprocess.run(cmd + extra, capture_output=True, timeout=self._timeout)
+        try:   # 0.1.2: the PIN's variable only in the environment of a call that logs in
+            r = subprocess.run(cmd + extra, capture_output=True, timeout=self._timeout,
+                               env=os.environ.copy() if login else _env_without(self._pin[4:]))
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"pkcs11-tool {what}: timeout after {self._timeout} s (token {self._token!r})") from None
         except OSError as e:
@@ -549,7 +618,7 @@ class Pkcs11Backend:
         if not os.environ.get(self._pin[4:], ""):
             raise RuntimeError(f"PIN environment variable {self._pin[4:]!r} is empty/unset")
         sig = self._figlio.chiama({"op": "sign", "module": self._module, "token": self._token, "key": self._key,
-                                   "pin_env": self._pin[4:], "msg": bytes(message).hex()},
+                                   "pin": os.environ.get(self._pin[4:], ""), "msg": bytes(message).hex()},
                                   f"sign with key {self._key!r}")
         if len(sig) != 64:
             raise RuntimeError(f"expected 64-byte Ed25519 signature, got {len(sig)}")
@@ -778,12 +847,7 @@ class AwsKmsHttpBackend:
             # loopback host. An http/remote override would leak the session token in the
             # SigV4 headers and let the signed requests (host pinned to kms.{region}) be
             # replayed against real AWS — the same guard VaultTransitBackend already has.
-            u = urllib.parse.urlsplit(endpoint)
-            if u.scheme != "https" and (u.hostname or "").lower() not in (
-                    "127.0.0.1", "localhost", "::1"):
-                raise ValueError("awskms-http endpoint must be https (or a loopback host "
-                                 "for testing)")
-            self._endpoint = endpoint
+            self._endpoint = _backend_url(endpoint, "awskms-http endpoint")
         else:
             self._endpoint = f"https://{self._host}"
 
@@ -801,13 +865,11 @@ class AwsKmsHttpBackend:
         op = target.rsplit(".", 1)[-1]
         try:   # 08/11/2026: HTTP/network/answer errors = one readable RuntimeError (no credentials in the text)
             with urllib.request.urlopen(req, timeout=20) as r:  # nosec B310 - fixed AWS endpoint
-                return json.load(r)
+                return json.loads(_risposta(r))
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"AWS KMS {op} HTTP {e.code} for {self._key_id}: {_http_error_text(e)}") from None
-        except urllib.error.URLError as e:
-            raise RuntimeError(f"AWS KMS {op}: {self._endpoint} unreachable: {str(e.reason)[:150]}") from None
-        except (OSError, ValueError) as e:
-            raise RuntimeError(f"AWS KMS {op}: {type(e).__name__}: {str(e)[:150]}") from None
+        except (OSError, ValueError) as e:   # 0.1.2: the kinds only; the text can carry the endpoint
+            raise RuntimeError(f"AWS KMS {op}: unreachable: {_net_reason(e)}") from None
 
     def public_key_hex(self) -> str:
         r = self._call("TrentService.GetPublicKey", {"KeyId": self._key_id})
@@ -841,7 +903,7 @@ class AwsKmsHttpBackend:
 def _http_error_text(e) -> str:
     """Short reason from an HTTP error body (Vault {"errors": [...]}, AWS {"__type", "message"}); never the request."""
     try:
-        body = json.loads(e.read().decode("utf-8", "replace") or "{}")
+        body = json.loads(_risposta(e).decode("utf-8", "replace") or "{}")
     except Exception:  # noqa: BLE001 — a body that is not JSON: only the status is reported
         return ""
     if isinstance(body, dict):
@@ -867,12 +929,7 @@ class VaultTransitBackend:
         token = os.environ.get(token_env, "")
         if not token:
             raise RuntimeError(f"Vault token env var {token_env!r} is empty/unset")
-        host = (urllib.parse.urlsplit(url).hostname or "").lower()
-        if url.startswith("http://") and host not in ("127.0.0.1", "localhost", "::1"):
-            raise RuntimeError("refusing plain http:// to a non-loopback Vault: "
-                               "the token would travel in cleartext (use https)")
-        if not url.startswith(("http://", "https://")):
-            raise ValueError("Vault url must start with https:// (or http:// to a loopback host)")
+        _backend_url(url, "Vault url")
         self._url, self._key, self._mount, self._token = url.rstrip("/"), key, mount, token
         self._timeout, self._version = timeout, None
 
@@ -883,13 +940,11 @@ class VaultTransitBackend:
                                               "Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as r:  # nosec B310 - scheme checked in __init__
-                raw = r.read()
+                raw = _risposta(r)
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"Vault HTTP {e.code} on {method} {path}: {_http_error_text(e)}") from None
-        except urllib.error.URLError as e:
-            raise RuntimeError(f"Vault unreachable at {self._url}: {str(e.reason)[:150]}") from None
-        except (OSError, ValueError) as e:   # socket timeout (TimeoutError), reset, bad URL
-            raise RuntimeError(f"Vault unreachable at {self._url}: {type(e).__name__}: {str(e)[:150]}") from None
+        except (OSError, ValueError) as e:   # unreachable, timeout, reset; 0.1.2: the kinds only, never the URL
+            raise RuntimeError(f"Vault unreachable: {_net_reason(e)}") from None
         try:
             return json.loads(raw.decode())
         except ValueError:
@@ -956,13 +1011,13 @@ def _parse_kv(spec: str, allowed=None) -> Dict[str, str]:
         k, sep, v = part.partition("=")
         k, v = k.strip(), v.strip()
         if not sep or not k:
-            raise ValueError(f"backend URI: segment {part[:40]!r} is not key=value")
+            raise ValueError("backend URI: a segment is not key=value (not repeated here: it could be a secret)")
         if not v:
-            raise ValueError(f"backend URI: empty value for {k!r}")
+            raise ValueError(f"backend URI: empty value for {_nameable(k)}")
         if k in out:
-            raise ValueError(f"backend URI: key {k!r} given twice")
+            raise ValueError(f"backend URI: key {_nameable(k)} given twice")
         if allowed is not None and k not in allowed:
-            raise ValueError(f"backend URI: unknown key {k!r} (allowed: {', '.join(sorted(allowed))})")
+            raise ValueError(f"backend URI: unknown key {_nameable(k)} (allowed: {', '.join(sorted(allowed))})")
         out[k] = v
     return out
 
@@ -1002,10 +1057,7 @@ class NetHsmBackend:
         passphrase = os.environ.get(pass_env, "")
         if not passphrase:
             raise RuntimeError(f"NetHSM passphrase env var {pass_env!r} is empty/unset")
-        host = (urllib.parse.urlsplit(url).hostname or "").lower()
-        if url.startswith("http://") and host not in ("127.0.0.1", "localhost", "::1"):
-            raise RuntimeError("refusing plain http:// to a non-loopback NetHSM: "
-                               "credentials would travel in cleartext (use https)")
+        _backend_url(url, "NetHSM url")
         self._url, self._key = url.rstrip("/"), key
         self._auth = base64.b64encode(f"{user}:{passphrase}".encode()).decode()
 
@@ -1015,9 +1067,14 @@ class NetHsmBackend:
                                      method=method,
                                      headers={"Authorization": f"Basic {self._auth}",
                                               "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            raw = r.read()
-            return json.loads(raw.decode()) if raw else {}
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                raw = _risposta(r)
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"NetHSM HTTP {e.code} on {method} {path}: {_http_error_text(e)}") from None
+        except (OSError, ValueError) as e:   # 0.1.2: the kinds only, never the URL
+            raise RuntimeError(f"NetHSM unreachable: {_net_reason(e)}") from None
+        return json.loads(raw.decode()) if raw else {}
 
     def keygen(self) -> str:
         """Generate the Ed25519 key ON the HSM (requires the Administrator role)."""

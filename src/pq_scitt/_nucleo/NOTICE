@@ -1,0 +1,30 @@
+omega-nucleo-comune
+Copyright (C) 2026 Roberto Locatelli
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The modules are taken from earlier works by the same author, each already reviewed there, and cited at the line
+where they enter. cryptovalid-opencore is licensed AGPL-3.0-or-later: the parts of its verifier.py and
+test_platforms_20261124.py named below were written by this author alone, who licenses them here, as their copyright
+holder, under Apache-2.0; cryptovalid-opencore itself stays AGPL-3.0-or-later. ap2-evidence-pack and aee-verifier are
+Apache-2.0. On 2026-11-25 cryptovalid 0.29.0 and ap2-evidence-pack 1.11.0 are not released: their commits named below
+are in their public repositories, reachable by hash, on branches that are not the default one.
+
+- nucleo/programs.py  which_absolute: cryptovalid (cryptovalid-opencore), 0.29.0 in preparation, commit f7883c9,
+                      verifier.py `which`.
+- nucleo/files.py     create_exclusive / create_private / private_tmpdir: cryptovalid commit 809be6a (unchanged in
+                      f7883c9), verifier.py `create_private` and `owner_only`; ap2-evidence-pack commits df398fa and
+                      5df7cb4, ap2_evidence.py `_create_exclusive` and `_private_tmpdir`.
+- nucleo/jsonio.py    json_loads_bounded / json_nesting_depth / _RecursionHeadroom: cryptovalid commit f7883c9,
+                      verifier.py (SPEC §30).
+- nucleo/canonical.py canonical_json_jcs: aee-verifier commit 0d8cee1, aee_verifier/jcs.py (Apache-2.0).
+- tests/test_vectors_rfc8785.py reads the vectors of RFC 8785 (A. Rundgren, B. Jordan, S. Erdtman, 2020, IETF Trust)
+                      at test time from the official text named by NUCLEO_RFC8785; no vector, table or sample of the
+                      RFC is kept in this repository: the test finds them by three short phrases of that text, and
+                      DIFFERENZE.md cites one pair of numbers (Independent Submission stream: TLP 5.0 sections 3.c
+                      and 4 do not apply, §8).
+- tests/test_programs.py, tests/test_files.py: cases adapted from cryptovalid test_platforms_20261124.py (f7883c9,
+                      classes NeverTheProgramOfTheCurrentFolder and TemporaryNamesOnWindows; there AGPL-3.0-or-later,
+                      here Apache-2.0 by the same author). tests/test_canonical.py: unit cases from aee-verifier
+                      tests/test_units.py (0d8cee1, Apache-2.0).
+
+Where the sources differ from what is here, DIFFERENZE.md names each change and why.

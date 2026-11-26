@@ -306,7 +306,7 @@ def _leggi_file(cartella: str, nome: str):
             return Esito(False, "cbor_troppo_lungo", nome)
         with os.fdopen(fd, "rb") as f:
             fd = -1
-            return f.read(cbor.MAX_BYTES + 1)
+            return strict_json.leggi_a_pezzi(f, cbor.MAX_BYTES)
     except OSError as e:
         return Esito(False, "forma_cose", nome + ": " + type(e).__name__)
     finally:

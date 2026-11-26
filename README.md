@@ -9,7 +9,9 @@ Transparent Statements, with post-quantum options (ML-DSA-65 signatures, SLH-DSA
   SHA3-256 of the canonical JSON of the entry, `prev_hash` = the previous `self_hash`) and prints a JSON receipt.
   The entry schema is open: other keys are hashed, not refused (`verify-ledger-standalone` refuses them). Ledgers
   without `idx` are checked by a generic hash recompute, or by linkage only (verdict `LINKED`, not `PASS`).
-  Optional out-of-band anchors: expected entry count, expected tip, HMAC of the tip, signed checkpoint.
+  Optional out-of-band anchors: expected entry count, expected tip, HMAC of the tip, signed checkpoint. The HMAC key
+  is read from an environment variable (`--hmac-key-env VAR`) or a file (`--hmac-key-file FILE`); `--hmac-key KEY`, on
+  the command line where other users of the machine can read it, is deprecated since 0.1.2.
 - `pq_scitt.ledger.standalone` (`pq-scitt verify-ledger-standalone`): a ledger verifier that needs only the Python
   standard library (from cryptovalid-opencore, same author).
 - `pq_scitt.scitt.export`, `pq_scitt.scitt.verify`, `pq_scitt.scitt.cbor` (`pq-scitt export`, `pq-scitt verify`):
@@ -23,7 +25,9 @@ Transparent Statements, with post-quantum options (ML-DSA-65 signatures, SLH-DSA
 - `pq_scitt.anchors.slh_dsa` (`pq-scitt anchor-selftest`): long-term anchors of a hash with SLH-DSA (FIPS 205, pure
   mode, empty context).
 - `pq_scitt.kms` (`pq-scitt kms`): signing backends where the private key stays in a PKCS#11 HSM, AWS KMS, HashiCorp
-  Vault Transit or a NetHSM; backend URIs have a closed form (an unknown or repeated key is an error). The PKCS#11
+  Vault Transit or a NetHSM; backend URIs have a closed form (an unknown or repeated key is an error). A backend URL
+  carries no user information and is `https://` (plain `http://` only to a loopback host); credentials come from the
+  environment, and no error repeats a URL, a key or a PIN (`tests/test_secrets.py`). The PKCS#11
   calls run in a child process: at the time limit of the URI (`timeout=`, default 60 s) it is killed, on Linux,
   macOS and Windows. On Windows the DLLs a PKCS#11 module depends on must sit in the module's folder or in a folder
   listed in `PQ_PKCS11_DLL_DIRS` (Python does not search `PATH` for them).

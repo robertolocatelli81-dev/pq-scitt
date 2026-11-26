@@ -1,0 +1,14 @@
+{
+  "files": {
+    "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "NOTICE": "5d03bcf4ff747a342be63597e9e0c837b45b53baacdbfac85d459d72ace0b004",
+    "__init__.py": "4947b2ccf6e0eed62461ab631b4df6a46530bbc5533f22788b8c71b9f255a7ab",
+    "canonical.py": "54e4e48081575a4f15b394bc4347ef96702c088ae14b861aaefa3109be6aff91",
+    "files.py": "ddc458a2d629760aecb9b168c356e6b320e6c3e7a545ef1d467376969842dd09",
+    "jsonio.py": "ec6048dfbfb544dcaabd468cc2fdddfb4ccd58a62d1ff8ce91d3cdcf83549e43",
+    "programs.py": "6180f46d996b06d093fc1616fcd51ae2c8c4d087aed0dae8caf7fbd840166e7f"
+  },
+  "format": "omega-nucleo-manifest/1",
+  "nucleo_commit": "83d39721723c85c4f5aecf2e714b45d2a460556b",
+  "nucleo_version": "0.1.0"
+}

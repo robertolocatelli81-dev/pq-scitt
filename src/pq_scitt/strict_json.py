@@ -11,7 +11,8 @@ says SHOULD: here it is our own requirement), finite numbers, strings without lo
 rejected with StrictJSONError and with a `motivo` taken from the MOTIVI list. Raises nothing else on bytes or str input.
 
 StrictJSONError is a ValueError: callers with `except ValueError` stay correct. Large integers: they stay exact in
-Python; beyond 4300 digits Python rejects them and here they become `non_json`. It is not a limit at 2^53.
+Python; beyond 4300 digits they are `non_json` on every Python (0.1.2: CPython before 3.10.7 read them). It is not a
+limit at 2^53.
 """
 from __future__ import annotations
 
@@ -52,9 +53,36 @@ def _coppie(coppie):
     d = {}
     for k, v in coppie:
         if k in d:
-            raise StrictJSONError("membro_ripetuto", repr(k)[:60])
+            raise StrictJSONError("membro_ripetuto", nominabile(k))
         d[k] = v
     return d
+
+
+def nominabile(nome) -> str:
+    """0.1.2: a name a reason repeats; one longer than 32 characters could be a secret put where a name goes: its
+    length only."""
+    return repr(nome) if isinstance(nome, str) and len(nome) <= 32 else "(a name of %d characters, not repeated)" % len(nome)
+
+
+MAX_CIFRE_INTERO = 4300   # CPython's default int_max_str_digits: the same answer on every Python (0.1.2)
+
+
+def _intero(testo):
+    if len(testo) - (testo[:1] == "-") > MAX_CIFRE_INTERO:
+        raise StrictJSONError("non_json", "an integer of more than %d digits" % MAX_CIFRE_INTERO)
+    return int(testo)
+
+
+def leggi_a_pezzi(f, limite: int) -> bytes:
+    """At most limite + 1 bytes of a binary file object, in pieces of at most 1 MiB (0.1.2): read(limite + 1) asks the
+    allocator for the whole bound before reading a byte (a 1-byte file was a MemoryError under a data limit below it)."""
+    out = bytearray()
+    while len(out) <= limite:
+        b = f.read(min(1 << 20, limite + 1 - len(out)))
+        if not b:
+            break
+        out += b
+    return bytes(out)
 
 
 def _costante(nome):
@@ -118,7 +146,8 @@ def loads(dati: Union[bytes, bytearray, memoryview, str], *, max_depth: int = MA
         raise StrictJSONError("tipo_ingresso", type(dati).__name__)
     _controlla_profondita(testo, max_depth)
     try:
-        obj = json.loads(testo, object_pairs_hook=_coppie, parse_constant=_costante, parse_float=_float)
+        obj = json.loads(testo, object_pairs_hook=_coppie, parse_constant=_costante, parse_float=_float,
+                         parse_int=_intero)
     except StrictJSONError:
         raise
     except (ValueError, RecursionError, MemoryError) as e:
@@ -157,7 +186,7 @@ def leggi_file(percorso, limite: int = MAX_FILE) -> bytes:
             raise OSError(errno.EINVAL, "not a regular file", percorso)
         f, fd = os.fdopen(fd, "rb"), -1
         with f:
-            dati = f.read(limite + 1)
+            dati = leggi_a_pezzi(f, limite)
     finally:
         if fd >= 0:
             os.close(fd)

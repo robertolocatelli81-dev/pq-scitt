@@ -61,6 +61,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -579,6 +580,36 @@ def verify_ledger(path: str, algo: Optional[str] = None, *,
     return _finalize(receipt, anchor)
 
 
+def _hmac_key(parser, args):
+    """0.1.2: the HMAC key from one of --hmac-key-env, --hmac-key-file or (deprecated, with a warning) --hmac-key. A
+    usage error names the option, never the key."""
+    given = [o for o, v in (("--hmac-key", args.hmac_key), ("--hmac-key-env", args.hmac_key_env),
+                            ("--hmac-key-file", args.hmac_key_file)) if v is not None]
+    if len(given) > 1:
+        parser.error("give the HMAC key once: %s" % " and ".join(given))
+    if args.hmac_key is not None:
+        sys.stderr.write("pq-scitt verify-ledger: --hmac-key is deprecated (0.1.2): the key is readable by other users "
+                         "in the process list; use --hmac-key-env VAR or --hmac-key-file FILE\n")
+        return args.hmac_key
+    if args.hmac_key_env is not None:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", args.hmac_key_env):
+            parser.error("--hmac-key-env: not an environment variable name")
+        key = os.environ.get(args.hmac_key_env)
+        if not key:
+            parser.error("--hmac-key-env: the variable %s is unset or empty" % args.hmac_key_env)
+        return key
+    if args.hmac_key_file is not None:
+        try:
+            key = _read_regular(args.hmac_key_file, 64 * 1024)
+        except OSError as e:
+            parser.error("--hmac-key-file: not readable (%s)" % (e.strerror or type(e).__name__))
+        key = key[:-2] if key.endswith(b"\r\n") else key[:-1] if key.endswith(b"\n") else key
+        if not key:
+            parser.error("--hmac-key-file: the file is empty")
+        return key
+    return None
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="pq-scitt verify-ledger",
@@ -599,7 +630,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--expect-tip", default=None,
                         help="FAILS if the last self_hash != HASH (forge+rechain / truncation)")
     parser.add_argument("--hmac-key", default=None,
-                        help="Key (str) for the HMAC-SHA256 of the tip; requires --expect-hmac")
+                        help="DEPRECATED (0.1.2): the key on the command line, which other users of the machine can "
+                             "read in the process list; use --hmac-key-env or --hmac-key-file")
+    parser.add_argument("--hmac-key-env", default=None, metavar="VAR",
+                        help="Name of the environment variable that holds the key (str, UTF-8) for the HMAC-SHA256 "
+                             "of the tip; requires --expect-hmac")
+    parser.add_argument("--hmac-key-file", default=None, metavar="FILE",
+                        help="Regular file holding the key (its bytes, one final LF or CRLF removed, at most 64 KiB) "
+                             "for the HMAC-SHA256 of the tip; requires --expect-hmac")
     parser.add_argument("--expect-hmac", default=None,
                         help="HMAC-SHA256(key,\"count:tip\") expected, from a trusted channel")
     parser.add_argument("--checkpoint", default=None,
@@ -612,10 +650,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Historical behaviour: signature verified with the key written in the "
                              "checkpoint; outcome marked 'non verificato' (not verified; identity not bound)")
     args = parser.parse_args(argv)
+    hmac_key = _hmac_key(parser, args)
 
     receipt = verify_ledger(args.ledger_path, algo=args.algo,
                             expect_count=args.expect_count, expect_tip=args.expect_tip,
-                            hmac_key=args.hmac_key, expect_hmac=args.expect_hmac,
+                            hmac_key=hmac_key, expect_hmac=args.expect_hmac,
                             checkpoint_path=args.checkpoint,
                             checkpoint_pubkey=args.checkpoint_pubkey,
                             checkpoint_allow_untrusted=args.checkpoint_tofu)

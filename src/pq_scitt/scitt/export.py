@@ -50,11 +50,11 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, mldsa
 
 try:
     from pq_scitt.scitt import cbor as cbor
-    from pq_scitt import filepriv
+    from pq_scitt import filepriv, strict_json
 except ImportError:  # source tree
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from pq_scitt.scitt import cbor as cbor
-    from pq_scitt import filepriv
+    from pq_scitt import filepriv, strict_json
 
 PROFILO = "omega-scitt/1"
 PROFILO_2 = "omega-scitt/2"
@@ -340,7 +340,7 @@ def _leggi_file_chiave(percorso: str) -> bytes:
             raise ExportError("key file: over 64 KiB")
         with os.fdopen(fd, "rb") as f:
             fd = -1
-            dati = f.read(MAX_FILE_CHIAVE + 1)
+            dati = strict_json.leggi_a_pezzi(f, MAX_FILE_CHIAVE)
         if len(dati) > MAX_FILE_CHIAVE:   # grew after fstat: the limit applies to the bytes read, not only to st_size
             raise ExportError("key file: over 64 KiB")
         return dati
@@ -772,7 +772,7 @@ def leggi_sali(percorso: str) -> List[bytes]:
         os.close(fd)
         raise ExportError("salts: not a regular file")
     with os.fdopen(fd, "rb") as f:
-        dati = f.read(strict_json.MAX_FILE + 1)
+        dati = strict_json.leggi_a_pezzi(f, strict_json.MAX_FILE)
     if len(dati) > strict_json.MAX_FILE:   # NEMESIS 24/11/2026: read whole, a large file was a MemoryError traceback
         raise ExportError("salts: file larger than %d bytes" % strict_json.MAX_FILE)
     tutte = []

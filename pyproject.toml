@@ -21,7 +21,10 @@ pq-scitt = "pq_scitt.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-packages = ["pq_scitt", "pq_scitt.scitt", "pq_scitt.anchors", "pq_scitt.ledger"]
+packages = ["pq_scitt", "pq_scitt.scitt", "pq_scitt.anchors", "pq_scitt.ledger", "pq_scitt._nucleo"]
+
+[tool.setuptools.package-data]
+"pq_scitt._nucleo" = ["LICENSE", "NOTICE", "NUCLEO_MANIFEST.json"]
 
 [tool.setuptools.dynamic]
 version = { attr = "pq_scitt.__version__" }
