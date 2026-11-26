@@ -131,6 +131,31 @@ def _risposta(r) -> bytes:
     return dati
 
 
+# 0.1.2: the name of an environment variable is not repeated either: the secret itself may have been put where its name goes
+_ENV_UNSET = "the environment variable of the %s is empty/unset (its name is not repeated here)"
+
+
+class _SameOrigin(urllib.request.HTTPRedirectHandler):
+    """0.1.2: a redirect is followed only to the same scheme, host and port. urllib copies every header of the request
+    (X-Vault-Token, Authorization, the SigV4 headers) to the address a redirect names, plain http included: the
+    credential would leave for a place the user never named."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        a, b = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(newurl)
+        try:
+            same = (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
+        except ValueError:
+            same = False
+        if not same:
+            return None     # urllib then raises the HTTPError of the 3xx answer: the caller reports its status
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _apri(req, timeout):
+    """urlopen for the three HTTP backends: no proxy handling changed, redirects by _SameOrigin."""
+    return urllib.request.build_opener(_SameOrigin).open(req, timeout=timeout)
+
+
 def _nameable(s) -> str:
     """0.1.2: a name an error repeats; one longer than 32 characters could be a secret put where a name goes."""
     return repr(s) if isinstance(s, str) and len(s) <= 32 else f"(a name of {len(s)} characters, not repeated)"
@@ -437,7 +462,7 @@ def _p11_lavoratore() -> None:
             if r["op"] == "pub":
                 out = _p11_public_key(r["module"], r["token"], r["key"])
             elif r["op"] == "sign":   # 0.1.2: the PIN comes with the request, never from this process's environment
-                out = _p11_sign_direct(r["module"], r["token"], r["key"], r["pin"].encode(), bytes.fromhex(r["msg"]))
+                out = _p11_sign_direct(r["module"], r["token"], r["key"], bytes.fromhex(r["pin"]), bytes.fromhex(r["msg"]))
             else:
                 raise RuntimeError("unknown request")
             risposta = {"ok": out.hex()}
@@ -555,7 +580,7 @@ class Pkcs11Backend:
         if not pin.startswith("env:"):
             raise ValueError("pin must be 'env:VARNAME' (argv PINs leak via ps)")
         if not os.environ.get(pin[4:]):
-            raise RuntimeError(f"PIN environment variable {pin[4:]!r} is empty/unset")
+            raise RuntimeError(_ENV_UNSET % "PIN (pin=env:VAR)")
         self._module, self._token, self._key, self._pin = module, token, key, pin
         self._timeout = timeout
         self._figlio = _Pkcs11Figlio(timeout, pin[4:])
@@ -616,9 +641,10 @@ class Pkcs11Backend:
 
     def sign(self, message: bytes) -> bytes:
         if not os.environ.get(self._pin[4:], ""):
-            raise RuntimeError(f"PIN environment variable {self._pin[4:]!r} is empty/unset")
+            raise RuntimeError(_ENV_UNSET % "PIN (pin=env:VAR)")
         sig = self._figlio.chiama({"op": "sign", "module": self._module, "token": self._token, "key": self._key,
-                                   "pin": os.environ.get(self._pin[4:], ""), "msg": bytes(message).hex()},
+                                   "pin": os.fsencode(os.environ.get(self._pin[4:], "")).hex(),   # the bytes pkcs11-tool reads
+                                   "msg": bytes(message).hex()},
                                   f"sign with key {self._key!r}")
         if len(sig) != 64:
             raise RuntimeError(f"expected 64-byte Ed25519 signature, got {len(sig)}")
@@ -864,7 +890,7 @@ class AwsKmsHttpBackend:
                                      headers=headers, method="POST")
         op = target.rsplit(".", 1)[-1]
         try:   # 08/11/2026: HTTP/network/answer errors = one readable RuntimeError (no credentials in the text)
-            with urllib.request.urlopen(req, timeout=20) as r:  # nosec B310 - fixed AWS endpoint
+            with _apri(req, 20) as r:  # nosec B310 - fixed AWS endpoint
                 return json.loads(_risposta(r))
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"AWS KMS {op} HTTP {e.code} for {self._key_id}: {_http_error_text(e)}") from None
@@ -928,7 +954,7 @@ class VaultTransitBackend:
                  token_env: str = "VAULT_TOKEN", timeout: float = 30.0):
         token = os.environ.get(token_env, "")
         if not token:
-            raise RuntimeError(f"Vault token env var {token_env!r} is empty/unset")
+            raise RuntimeError(_ENV_UNSET % "Vault token (token_env=VAR, default VAULT_TOKEN)")
         _backend_url(url, "Vault url")
         self._url, self._key, self._mount, self._token = url.rstrip("/"), key, mount, token
         self._timeout, self._version = timeout, None
@@ -939,7 +965,7 @@ class VaultTransitBackend:
                                      headers={"X-Vault-Token": self._token,
                                               "Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as r:  # nosec B310 - scheme checked in __init__
+            with _apri(req, self._timeout) as r:  # nosec B310 - scheme checked in __init__
                 raw = _risposta(r)
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"Vault HTTP {e.code} on {method} {path}: {_http_error_text(e)}") from None
@@ -1031,7 +1057,7 @@ def _timeout(kv: Dict[str, str], default: float) -> float:
             raise ValueError
         t = float(kv["timeout"])
     except ValueError:
-        raise ValueError(f"backend URI: timeout {kv['timeout'][:20]!r} is not a number") from None
+        raise ValueError("backend URI: timeout is not a number (ASCII digits, an optional fraction)") from None
     if not (0 < t <= 600):   # also refuses nan and inf
         raise ValueError("backend URI: timeout must be in (0, 600] seconds")
     return t
@@ -1039,7 +1065,7 @@ def _timeout(kv: Dict[str, str], default: float) -> float:
 
 def _aws_region(region):
     if region is not None and not _AWS_REGION_RE.fullmatch(region):
-        raise ValueError(f"AWS region {region[:40]!r} is not of the form xx-name-N (it becomes part of a hostname)")
+        raise ValueError("AWS region: not of the form xx-name-N (it becomes part of a hostname)")
     return region
 
 
@@ -1056,7 +1082,7 @@ class NetHsmBackend:
                  pass_env: str = "NETHSM_PASS"):
         passphrase = os.environ.get(pass_env, "")
         if not passphrase:
-            raise RuntimeError(f"NetHSM passphrase env var {pass_env!r} is empty/unset")
+            raise RuntimeError(_ENV_UNSET % "NetHSM passphrase (pass_env=VAR, default NETHSM_PASS)")
         _backend_url(url, "NetHSM url")
         self._url, self._key = url.rstrip("/"), key
         self._auth = base64.b64encode(f"{user}:{passphrase}".encode()).decode()
@@ -1068,7 +1094,7 @@ class NetHsmBackend:
                                      headers={"Authorization": f"Basic {self._auth}",
                                               "Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+            with _apri(req, 30) as r:
                 raw = _risposta(r)
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"NetHSM HTTP {e.code} on {method} {path}: {_http_error_text(e)}") from None
@@ -1120,7 +1146,7 @@ def backend_from_uri(uri: str, **extra):
     if scheme == "file":
         return FileKeyBackend(rest)
     if scheme not in _ALLOWED_KEYS or scheme == "awskms-mldsa65":
-        raise ValueError(f"unknown backend scheme {scheme!r} "
+        raise ValueError(f"unknown backend scheme {_nameable(scheme)} "
                          "(expected file: | pkcs11: | awskms: | awskms-http: | vault: | nethsm:)")
     kv = _parse_kv(rest, _ALLOWED_KEYS[scheme])
     missing = [k for k in _REQUIRED_KEYS.get(scheme, ()) if not kv.get(k)]

@@ -596,7 +596,7 @@ def _hmac_key(parser, args):
             parser.error("--hmac-key-env: not an environment variable name")
         key = os.environ.get(args.hmac_key_env)
         if not key:
-            parser.error("--hmac-key-env: the variable %s is unset or empty" % args.hmac_key_env)
+            parser.error("--hmac-key-env: the variable named is unset or empty (its name is not repeated here)")
         return key
     if args.hmac_key_file is not None:
         try:
@@ -608,6 +608,16 @@ def _hmac_key(parser, args):
             parser.error("--hmac-key-file: the file is empty")
         return key
     return None
+
+
+class _Once(argparse.Action):
+    """0.1.2: an option of the HMAC key given twice is a usage error (the last one won, in silence); its value is not
+    repeated."""
+
+    def __call__(self, parser, ns, value, option=None):
+        if getattr(ns, self.dest) is not None:
+            parser.error("%s given twice" % option)
+        setattr(ns, self.dest, value)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -629,13 +639,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="FAILS if there are fewer than N entries (tail truncation)")
     parser.add_argument("--expect-tip", default=None,
                         help="FAILS if the last self_hash != HASH (forge+rechain / truncation)")
-    parser.add_argument("--hmac-key", default=None,
+    parser.add_argument("--hmac-key", default=None, action=_Once,
                         help="DEPRECATED (0.1.2): the key on the command line, which other users of the machine can "
                              "read in the process list; use --hmac-key-env or --hmac-key-file")
-    parser.add_argument("--hmac-key-env", default=None, metavar="VAR",
+    parser.add_argument("--hmac-key-env", default=None, metavar="VAR", action=_Once,
                         help="Name of the environment variable that holds the key (str, UTF-8) for the HMAC-SHA256 "
                              "of the tip; requires --expect-hmac")
-    parser.add_argument("--hmac-key-file", default=None, metavar="FILE",
+    parser.add_argument("--hmac-key-file", default=None, metavar="FILE", action=_Once,
                         help="Regular file holding the key (its bytes, one final LF or CRLF removed, at most 64 KiB) "
                              "for the HMAC-SHA256 of the tip; requires --expect-hmac")
     parser.add_argument("--expect-hmac", default=None,

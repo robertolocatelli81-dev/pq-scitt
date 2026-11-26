@@ -13,6 +13,7 @@ jobs:
   test:
     name: test (${{ matrix.os }}, ${{ matrix.python }}, slh ${{ matrix.slh }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60   # a hung job ends here, not after GitHub's 6 hours
     strategy:
       fail-fast: false
       matrix:

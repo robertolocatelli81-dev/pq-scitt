@@ -8,7 +8,7 @@ Each change has a test in `tests/test_secrets.py` (new, permanent) that fails on
 
 - `pq_scitt.kms`, `pq-scitt kms`: the URL of a backend (`vault:url=`, `nethsm:url=`, `awskms-http:endpoint=`) is
   written by `describe()` into what `pq-scitt kms` prints, and was repeated by the errors. It must now be `http` or
-  `https`, a host and an optional port, with no user information (RFC 3986 section 3.2.1: `user:password` in the
+  `https`, a host (an IPv6 address without a zone) and an optional port, with no user information (RFC 3986 section 3.2.1: `user:password` in the
   userinfo "is deprecated", and applications "should reject the storage of such data in unencrypted form"), printable
   ASCII without spaces; any other is refused before the network, and the error does not repeat it. NetHSM had no
   scheme check (an `ftp:` or a plain `HTTP://` URL to a remote host was accepted); now plain `http://` only to a
@@ -25,13 +25,26 @@ Each change has a test in `tests/test_secrets.py` (new, permanent) that fails on
   bare name). A call of `pkcs11-tool` that does not log in gets the environment without the PIN's variable, and the
   child process that reads the public key and signs is started without it: the PIN reaches it in the sign request, so
   neither the module nor a process the module starts inherits it.
+- `pq_scitt.kms`: the name of an environment variable (`pin=env:VAR`, `token_env=`, `pass_env=`) is not repeated when
+  the variable is unset or empty (it was: a token, passphrase or PIN put where the name goes came out whole); a
+  backend scheme longer than 32 characters is named by its length, here and in `pq-scitt export --chiave-*`; a
+  `timeout=` or `region=` that is refused is not repeated (20 and 40 characters of it were).
+- `pq_scitt.kms`, PKCS#11: the PIN goes to the child process as the bytes of the environment variable, the ones
+  `pkcs11-tool` reads. A PIN that is not UTF-8 could not sign, and the error named one of its characters and where it
+  stands (`UnicodeEncodeError ... in position 2`).
+- `pq_scitt.kms`, Vault, NetHSM and AWS over HTTP: a redirect is followed only to the same scheme, host and port.
+  `urllib` copies the headers of a request (`X-Vault-Token`, `Authorization`, the SigV4 headers and the session token)
+  to whatever address a redirect names, plain `http://` included; any other redirect is now the error `HTTP 3xx`.
+  A Vault standby that redirects to the active node on another host is refused: name the active node or the load
+  balancer in `url=`.
 - `pq_scitt.kms`, `file:` backend: a key file that is not one 32-byte hex line is one fixed message; the decoding error
   named a byte of it.
 - `pq-scitt verify-ledger`: `--hmac-key-env VAR` and `--hmac-key-file FILE` (its bytes, one final LF or CRLF removed,
   at most 64 KiB, a regular file) give the HMAC key without putting it on the command line, where other users of the
   machine read it in the process list. `--hmac-key KEY` still works and is deprecated: it prints a warning on standard
-  error. Giving the key twice, an unset or empty variable, or an unreadable or empty file is a usage error (exit 2) that
-  names the option, never the key.
+  error. Giving the key twice (two of the options, or one of them twice), an unset or empty variable, or an unreadable
+  or empty file is a usage error (exit 2) that names the option, never the key nor the name of the variable (the key
+  itself may have been put where the name goes).
 - `pq_scitt.strict_json`: a repeated member name longer than 32 characters is named by its length (60 characters of it
   were repeated). An integer of more than 4300 digits is `non_json` with the same reason on every Python (CPython read
   one whole before 3.10.7, and refused it with its own message after). `pq-scitt verify-ledger-standalone` counts the
@@ -46,7 +59,13 @@ Measured 2026-11-26 on Linux x86-64 (this branch, not committed yet when measure
 `test_kms_reali.py` ran (SoftHSM2 and OpenSC installed); its OpenBao tests skipped here (no OpenBao binary or image).
 Mutants on the new lines (by hand, each against `test_secrets`): 36, 35 killed, 1 equivalent (`_net_reason` with a
 reason that is a string: the kind printed differs, nothing of the text is printed either way). Python 3.10, the
-floor, was not run here (no interpreter on this machine): the CI runs it.
+floor, was not run here (no interpreter on this machine): the CI runs it. The lines added by the review of the same
+day (the four entries on variable names, the PIN's bytes, redirects and an option given twice): 15 mutants, 13 killed
+by its first tests, 1 (a redirect to another scheme on the same host and port) killed by a test added after, 1
+equivalent on POSIX (`os.fsencode` is UTF-8 with `surrogateescape` there). The bound of 32 characters (`kms._nameable`,
+`strict_json.nominabile`): a mutant `< 32` passed the whole suite; a test of 32 and 33 characters now kills it.
+
+`pq_scitt.__version__` stays `0.1.1` until the release, which sets it.
 
 CI: on every branch Linux, macOS and Windows with Python 3.10 to 3.14, each with and without `slh-dsa` (0.1.1: macOS
 and Windows with 3.13 only); a newer push to a `ci-prova-*` branch stops the run it supersedes. Not yet run: this

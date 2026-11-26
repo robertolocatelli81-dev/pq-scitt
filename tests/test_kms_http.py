@@ -60,7 +60,7 @@ class TestNetHsmRispostaMalformata(unittest.TestCase):
         for corpo in (b"{}", b'{"public": 5}', b'{"signature": 7}', b"[]"):
             risposta = mock.MagicMock()
             risposta.__enter__.return_value = io.BytesIO(corpo)
-            with mock.patch("urllib.request.urlopen", return_value=risposta):
+            with mock.patch("pq_scitt.kms._apri", return_value=risposta):
                 for f in (b.public_key_hex, lambda: b.sign(b"m")):
                     with self.assertRaises(RuntimeError, msg=corpo):
                         f()

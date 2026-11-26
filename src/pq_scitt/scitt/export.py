@@ -396,7 +396,9 @@ def carica_firmatario(uri: str, alg: int) -> Firmatario:
             raise
         except Exception as e:   # incomplete URI, network, credentials, missing module, botocore: a readable refusal
             raise ExportError("%s: %s: %s" % (schema, type(e).__name__, str(e)[:200])) from None
-    raise ExportError("key scheme not allowed: %s" % schema)
+    # 0.1.2: a scheme longer than 32 characters could be a key put where the URI goes: its length only
+    raise ExportError("key scheme not allowed: %s" % (schema if len(schema) <= 32 else
+                                                      "(a name of %d characters, not repeated)" % len(schema)))
 
 
 def _firmatario_kms(kms, schema: str, resto: str, uri: str, alg: int) -> Firmatario:

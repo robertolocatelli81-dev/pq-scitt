@@ -105,7 +105,7 @@ class TheSearchFinds(Base):
         with self.assertRaises(AssertionError):
             self.none("leak", json.dumps(be.describe()))
         with mock.patch.object(kms, "_net_reason", lambda e: str(e)), \
-                mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("at " + url)):
+                mock.patch.object(kms, "_apri", side_effect=urllib.error.URLError("at " + url)):
             texts = self.refused(be._req, "GET", "x")
         with self.assertRaises(AssertionError):
             self.none("leak", *texts)
@@ -122,7 +122,7 @@ class BackendURLs(Base):
         for url in self.URLS:
             for uri in ("vault:url=%s;key=k" % url, "nethsm:url=%s;key=k;user=u" % url,
                         "awskms-http:key_id=k;region=eu-central-1;endpoint=%s" % url):
-                with mock.patch.dict(os.environ, env), mock.patch("urllib.request.urlopen") as net:
+                with mock.patch.dict(os.environ, env), mock.patch.object(kms, "_apri") as net:
                     texts = self.refused(kms.backend_from_uri, uri)
                 self.assertEqual(net.call_count, 0)
                 self.none(uri, *texts)
@@ -155,17 +155,37 @@ class BackendURLs(Base):
             for be in (kms.backend_from_uri("awskms-http:key_id=k;region=eu-central-1;endpoint=http://127.0.0.1:1/" + PASSWORD),
                        kms.backend_from_uri("vault:url=http://127.0.0.1:1/%s;key=k;timeout=5" % PASSWORD),
                        kms.backend_from_uri("nethsm:url=http://127.0.0.1:1/%s;key=k;user=u" % PASSWORD)):
-                with mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError(
+                with mock.patch.object(kms, "_apri", side_effect=urllib.error.URLError(
                         OSError(111, "http://127.0.0.1:1/" + PASSWORD))):
                     texts = self.refused(be.public_key_hex)
                 self.none(be.name, *texts)
                 self.assertIn("unreachable: URLError: ConnectionRefusedError [Errno 111]", " ".join(texts))
 
     def test_a_uri_segment_or_name_is_not_repeated(self):
+        from pq_scitt.strict_json import nominabile     # the bound: 32 characters repeated, 33 named by their length
+        for f in (kms._nameable, nominabile):
+            self.assertEqual(f("a" * 32), repr("a" * 32))
+            self.assertEqual(f("a" * 33), "(a name of 33 characters, not repeated)")
         for uri in ("vault:" + PASSWORD, "vault:url=https://192.0.2.1;" + PASSWORD, "vault:%s=1;url=https://192.0.2.1" % KEYNAME,
-                    "vault:url=https://192.0.2.1;key=k;%s=1;%s=2" % (KEYNAME, KEYNAME), "vault:%s=" % KEYNAME):
-            with mock.patch.dict(os.environ, {"VAULT_TOKEN": "t"}):
-                self.none(uri, *self.refused(kms.backend_from_uri, uri))
+                    "vault:url=https://192.0.2.1;key=k;%s=1;%s=2" % (KEYNAME, KEYNAME), "vault:%s=" % KEYNAME,
+                    # the secret itself where the NAME of its environment variable goes, or where the scheme, the
+                    # timeout or the region go
+                    "vault:url=https://192.0.2.1;key=k;token_env=" + PASSWORD, "nethsm:url=https://192.0.2.1;key=k;user=u;pass_env=" + PASSWORD,
+                    "pkcs11:module=/m.so;token=t;key=k;pin=env:" + PASSWORD, "pkcs11:module=/m.so;token=t;key=k;pin=" + PASSWORD,
+                    KEYNAME, KEYNAME + ":x", "vault:url=https://192.0.2.1;key=k;timeout=" + PASSWORD[:20],
+                    "awskms-http:key_id=k;region=" + PASSWORD):
+            with mock.patch.dict(os.environ, {"VAULT_TOKEN": "t", "AWS_ACCESS_KEY_ID": "a", "AWS_SECRET_ACCESS_KEY": "s"}), \
+                    mock.patch.object(kms, "which_absolute", return_value="/usr/bin/pkcs11-tool"):
+                texts = self.refused(kms.backend_from_uri, uri)
+                self.none(uri, *texts)
+                self.assertEqual(found(PASSWORD.encode()[:16], *texts), [], uri)     # nor a part of it
+            rc, out, err = run(["kms", "pubkey", "--backend", uri], {"VAULT_TOKEN": "t"})
+            self.assertEqual(rc, 1, uri)
+            self.none(uri, out, err)
+        self.assertIn("unknown backend scheme 'nope'", " ".join(self.refused(kms.backend_from_uri, "nope:x")))
+        from pq_scitt.scitt import export as sx
+        self.none("export scheme", *self.refused(sx.carica_firmatario, KEYNAME + ":x", -19))
+        self.assertIn("key scheme not allowed: nope", self.refused(sx.carica_firmatario, "nope:x", -19))
 
     def test_a_name_given_twice_is_not_repeated(self):
         texts = self.refused(kms._parse_kv, "%s=1;%s=2" % (KEYNAME, KEYNAME))
@@ -182,8 +202,74 @@ class BackendURLs(Base):
 
             def __exit__(self, *a):
                 return False
-        with mock.patch("urllib.request.urlopen", return_value=Big(b" " * (kms.MAX_RISPOSTA + 1))):
+        with mock.patch.object(kms, "_apri", return_value=Big(b" " * (kms.MAX_RISPOSTA + 1))):
             self.assertIn("ValueError", " ".join(self.refused(be.public_key_hex)))
+        self.a_redirect_to_another_origin_is_not_followed()
+
+    def a_redirect_to_another_origin_is_not_followed(self):
+        """urllib copies the headers of a request to the address a redirect names: the credential must not follow it to
+        another scheme, host or port (a real server on loopback; the second one must see no request)."""
+        import http.server
+        import threading
+        import time
+        seen = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def answer(self):
+                self.rfile.read(int(self.headers.get("content-length") or 0))
+                seen.append((self.server.server_address[1], self.path, " ".join(self.headers.values())))
+                if self.path.endswith("/slow"):
+                    time.sleep(3)
+                if self.path.endswith("/same"):
+                    body = b'{"data": {}}'
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self.send_response(302)
+                self.send_header("Location", "http://127.0.0.1:%d/same" % (
+                    one.server_address[1] if self.path.endswith("/to-same") else two.server_address[1]))
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            do_GET = do_POST = do_PUT = answer
+
+            def log_message(self, *a):
+                pass
+        one, two = (http.server.HTTPServer(("127.0.0.1", 0), H) for _ in range(2))
+        for s in (one, two):
+            threading.Thread(target=s.serve_forever, daemon=True).start()
+            self.addCleanup(s.server_close)
+            self.addCleanup(s.shutdown)
+        url = "http://127.0.0.1:%d" % one.server_address[1]
+        env = {"VAULT_TOKEN": PASSWORD, "NETHSM_PASS": PASSWORD, "AWS_ACCESS_KEY_ID": "a", "AWS_SECRET_ACCESS_KEY": "s",
+               "AWS_SESSION_TOKEN": PASSWORD}
+        with mock.patch.dict(os.environ, env):
+            for be in (kms.backend_from_uri("vault:url=%s;key=k;timeout=5" % url),
+                       kms.backend_from_uri("nethsm:url=%s;key=k;user=u" % url),
+                       kms.backend_from_uri("awskms-http:key_id=k;region=eu-central-1;endpoint=%s" % url)):
+                del seen[:]
+                texts = self.refused(be.public_key_hex)
+                self.assertTrue(seen, be.name)
+                self.assertEqual([s for s in seen if s[0] == two.server_address[1]], [], be.name)
+                self.assertIn("HTTP 302", " ".join(texts), be.name)
+            be = kms.backend_from_uri("vault:url=%s;key=k;timeout=5" % url)
+            del seen[:]
+            self.assertEqual(be._req("GET", "x/to-same"), {"data": {}})        # the same origin is still followed
+            self.assertEqual([s[1] for s in seen], ["/v1/x/to-same", "/same"])
+            be = kms.backend_from_uri("vault:url=%s;key=k;timeout=0.5" % url)       # the time limit of the URI still holds
+            t0 = time.monotonic()
+            self.assertIn("Vault unreachable: ", " ".join(self.refused(be._req, "GET", "x/slow")))
+            self.assertLess(time.monotonic() - t0, 2.5)
+        # the scheme counts too: https to http on the same host and port is a downgrade (NEMESIS 26/11/2026: a check of
+        # host and port only passed the whole suite)
+        import urllib.request
+        handler, hdrs = kms._SameOrigin(), {}
+        for old, new, followed in (("https://h.example/v1/x", "http://h.example/v1/x", False),
+                                   ("https://h.example:8200/v1/x", "http://h.example:8200/v1/x", False),
+                                   ("https://h.example/v1/x", "https://h.example/v1/y", True)):
+            req = urllib.request.Request(old, headers={"X-Vault-Token": PASSWORD})
+            self.assertEqual(handler.redirect_request(req, None, 302, "Found", hdrs, new) is not None, followed, new)
 
 
 try:
@@ -260,12 +346,17 @@ class HmacKey(Base):
         p, want = self.ledger()
         k = self.file("k", PASSWORD)
         empty = self.file("e", "")
+        named = "K" + SEED.hex()[:40]          # a key that is also a possible variable name
         for argv, env in ((["--hmac-key", PASSWORD, "--hmac-key-file", k], {}), (["--hmac-key-env", "PQ_ABSENT_X"], {}), (["--hmac-key-env", "PQ_EMPTY_X"], {"PQ_EMPTY_X": ""}),
+                          (["--hmac-key-env", named], {}), (["--hmac-key-file", k, "--hmac-key-file", k], {}),
+                          (["--hmac-key", PASSWORD, "--hmac-key", PASSWORD], {}),
+                          (["--hmac-key-env", "PQ_TWICE_X", "--hmac-key-env", "PQ_TWICE_X"], {"PQ_TWICE_X": PASSWORD}),
                           (["--hmac-key-env", PASSWORD + "-"], {}), (["--hmac-key-file", os.path.join(self.d, "no")], {}),
                           (["--hmac-key-file", empty], {}), (["--hmac-key-file", self.d], {})):
             rc, so, se = run(["verify-ledger", p, "--expect-hmac", want] + argv, env)
             self.assertEqual(rc, 2, argv)
             self.none(argv, so, se)
+            self.assertNotIn(named, so + se, argv)
 
 
 class Programs(Base):
@@ -285,6 +376,11 @@ class Programs(Base):
         self.assertEqual(seen[0][1].get("PQ_TEST_PIN"), PASSWORD)
         self.assertNotIn("PQ_TEST_PIN", seen[1][1])
         self.none("argv", *[" ".join(c[0]) for c in seen])
+        named = "K" + SEED.hex()[:40]          # the variable is unset at the time of the signature: its name is not repeated
+        with mock.patch.object(kms, "which_absolute", return_value=tool):
+            with mock.patch.dict(os.environ, {named: "1234"}):
+                be = kms.Pkcs11Backend("/m.so", "t", "k", pin="env:" + named)
+            self.assertNotIn(named, " ".join(self.refused(be.sign, b"m")))
 
     def test_the_pkcs11_child_has_no_pin_in_its_environment(self):
         started = []
@@ -300,6 +396,36 @@ class Programs(Base):
         self.assertIsNotNone(started[0])
         self.assertNotIn("PQ_TEST_PIN", started[0])
         self.none("child env", json.dumps(started[0]))
+        if os.name != "nt":     # POSIX: a variable whose bytes are not UTF-8 (Windows' environment is UTF-16)
+            self.the_pin_goes_as_the_bytes_of_the_environment()
+
+    def the_pin_goes_as_the_bytes_of_the_environment(self):
+        """A PIN that is not UTF-8 reached the child as text and str.encode() named one of its characters and where it
+        stands; it goes as the bytes pkcs11-tool reads, and the child answers about the module, not about the PIN."""
+        pin = b"Pi\xe9" + PASSWORD.encode()
+        sent = []
+
+        class F:
+            def chiama(self, richiesta, cosa):
+                sent.append(richiesta)
+                return b"s" * 64
+        with mock.patch.object(kms, "which_absolute", return_value="/usr/bin/pkcs11-tool"), \
+                mock.patch.dict(os.environb, {b"PQ_TEST_PIN": pin}):
+            be = kms.Pkcs11Backend("/no/such/module.so", "t", "k", pin="env:PQ_TEST_PIN")
+            real, be._figlio = be._figlio, F()
+            be.sign(b"m")
+            self.assertEqual(bytes.fromhex(sent[0]["pin"]), pin)
+            be._figlio = real
+            texts = self.refused(be.sign, b"m")
+        self.assertNotIn("Unicode", " ".join(texts))
+        self.assertNotIn("position", " ".join(texts))
+        self.assertIn("cannot be loaded", " ".join(texts))
+        # the child gives the module those same bytes (a module replaced by one that answers with the PIN it got)
+        code = ("from pq_scitt import kms\nkms._p11_sign_direct = lambda module, token, key, pin, msg: pin\n"
+                "kms._p11_lavoratore()\n")
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=120,
+                           input=json.dumps(dict(sent[0], op="sign")).encode() + b"\n")
+        self.assertEqual(bytes.fromhex(json.loads(r.stdout)["ok"]), pin, r.stderr[-300:])
 
     def test_no_program_by_bare_name_no_tempfile(self):
         bad = re.compile(r"shutil\.which\(|tempfile\.mk[sd]temp|NamedTemporaryFile\(|TemporaryDirectory\(|"
