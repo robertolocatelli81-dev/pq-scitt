@@ -630,7 +630,7 @@ class TestVaultReale(_Comune):
         threading.Thread(target=accetta, daemon=True).start()
         try:
             self._tre_livelli(self.uri("issuer", url="http://127.0.0.1:%d" % srv.getsockname()[1], timeout="1"),
-                              "timed out")
+                              "TimeoutError")   # 0.1.2: the kind of the error, not its text (which can carry the URL)
         finally:
             srv.close()
             for s in aperte:
