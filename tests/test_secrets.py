@@ -10,6 +10,7 @@ Positive control: a producer that leaks is found in each of those forms; and on 
 the new behaviour fail (CHANGELOG 0.1.2 counts them)."""
 import base64
 import contextlib
+import errno
 import hashlib
 import io
 import json
@@ -156,10 +157,10 @@ class BackendURLs(Base):
                        kms.backend_from_uri("vault:url=http://127.0.0.1:1/%s;key=k;timeout=5" % PASSWORD),
                        kms.backend_from_uri("nethsm:url=http://127.0.0.1:1/%s;key=k;user=u" % PASSWORD)):
                 with mock.patch.object(kms, "_apri", side_effect=urllib.error.URLError(
-                        OSError(111, "http://127.0.0.1:1/" + PASSWORD))):
+                        OSError(errno.ECONNREFUSED, "http://127.0.0.1:1/" + PASSWORD))):
                     texts = self.refused(be.public_key_hex)
                 self.none(be.name, *texts)
-                self.assertIn("unreachable: URLError: ConnectionRefusedError [Errno 111]", " ".join(texts))
+                self.assertIn("unreachable: URLError: ConnectionRefusedError [Errno %d]" % errno.ECONNREFUSED, " ".join(texts))
 
     def test_a_uri_segment_or_name_is_not_repeated(self):
         from pq_scitt.strict_json import nominabile     # the bound: 32 characters repeated, 33 named by their length
