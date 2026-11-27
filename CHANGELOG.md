@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.2 (unreleased)
+## 0.1.2 (2026-11-27)
 
 Security: a secret given to pq-scitt no longer comes out of it, and a program is never taken from the current folder.
 Each change has a test in `tests/test_secrets.py` (new, permanent) that fails on 0.1.1 (34606f7): 18 of its
