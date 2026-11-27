@@ -53,6 +53,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          cd dist && sha256sum -c SHA256SUMS && cd ..
+          set -euo pipefail
+          (cd dist; sha256sum -c SHA256SUMS)   # alone on its line: in an && list a failed check would not end the step
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --verify-tag \
             --notes "Wheel, sdist and SHA256SUMS. Provenance: gh attestation verify <file> --repo $GITHUB_REPOSITORY"

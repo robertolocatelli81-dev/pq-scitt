@@ -45,7 +45,7 @@ Format identifiers keep their names (`omega-scitt/1`, `omega-scitt/2`, `applicat
 ## Status
 
 - **Releases**: 0.1.0, a GitHub release (12 November 2026: wheel, sdist, SHA256SUMS), not on PyPI, extracted on
-  2026-11-08 from a larger private code base by the same author; 0.1.1 fixes the defects listed in `CHANGELOG.md`.
+  2026-11-08 from a larger private code base by the same author; 0.1.1 and 0.1.2 fix the defects listed in `CHANGELOG.md`.
 - **One maintainer** (Roberto Locatelli). No independent review outside the author's own process yet.
 - **Tests** of version 0.1.0, measured on 2026-11-08 on Linux x86-64 in clean virtual environments, against the **installed wheel**
   (dependencies from `requirements/ci.txt`): Python 3.10.22, 3.11.2, 3.12.15, 3.13.15 and 3.14.8, each 243 unittest

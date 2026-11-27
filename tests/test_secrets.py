@@ -116,7 +116,9 @@ class BackendURLs(Base):
     URLS = ("https://u:%s@192.0.2.1/" % PASSWORD, "https://%s@192.0.2.1/" % PASSWORD, "HTTPS://u:%s@192.0.2.1" % PASSWORD,
             "https://%s:@192.0.2.1" % PASSWORD, "https://u:%s@[::1]:8200" % PASSWORD, "https://192.0.2.1/\\@" + PASSWORD,
             "https://192.0.2.1/ " + PASSWORD, "https://192.0.2.1/\x00" + PASSWORD, "https://192.0.2.1/é" + PASSWORD,
-            "ftp://" + PASSWORD, PASSWORD, "https://192.0.2.1:99999/" + PASSWORD, "HTTP://192.0.2.1/" + PASSWORD)
+            "ftp://" + PASSWORD, PASSWORD, "https://192.0.2.1:99999/" + PASSWORD, "HTTP://192.0.2.1/" + PASSWORD,
+            "https://192.0.2.1?token=" + PASSWORD, "https://192.0.2.1/v?token=" + PASSWORD,
+            "https://192.0.2.1:8200#" + PASSWORD, "https://[::1]/p#" + PASSWORD)
 
     def test_every_backend_refuses_without_repeating(self):
         env = {"VAULT_TOKEN": "t", "NETHSM_PASS": "p", "AWS_ACCESS_KEY_ID": "a", "AWS_SECRET_ACCESS_KEY": "s"}

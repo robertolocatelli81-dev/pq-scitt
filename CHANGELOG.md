@@ -8,7 +8,9 @@ Each change has a test in `tests/test_secrets.py` (new, permanent) that fails on
 
 - `pq_scitt.kms`, `pq-scitt kms`: the URL of a backend (`vault:url=`, `nethsm:url=`, `awskms-http:endpoint=`) is
   written by `describe()` into what `pq-scitt kms` prints, and was repeated by the errors. It must now be `http` or
-  `https`, a host (an IPv6 address without a zone) and an optional port, with no user information (RFC 3986 section 3.2.1: `user:password` in the
+  `https`, a host (an IPv6 address without a zone), an optional port and an optional path, which `describe()` prints
+  (put no credential there), with no query or fragment (the API path is appended to the URL: with either, no request
+  reached the service's API), with no user information (RFC 3986 section 3.2.1: `user:password` in the
   userinfo "is deprecated", and applications "should reject the storage of such data in unencrypted form"), printable
   ASCII without spaces; any other is refused before the network, and the error does not repeat it. NetHSM had no
   scheme check (an `ftp:` or a plain `HTTP://` URL to a remote host was accepted); now plain `http://` only to a
@@ -65,11 +67,14 @@ by its first tests, 1 (a redirect to another scheme on the same host and port) k
 equivalent on POSIX (`os.fsencode` is UTF-8 with `surrogateescape` there). The bound of 32 characters (`kms._nameable`,
 `strict_json.nominabile`): a mutant `< 32` passed the whole suite; a test of 32 and 33 characters now kills it.
 
-`pq_scitt.__version__` stays `0.1.1` until the release, which sets it.
+`pq_scitt.__version__` and the `verifier` string of the ledger receipts are 0.1.2.
 
 CI: on every branch Linux, macOS and Windows with Python 3.10 to 3.14, each with and without `slh-dsa` (0.1.1: macOS
-and Windows with 3.13 only); a newer push to a `ci-prova-*` branch stops the run it supersedes. Not yet run: this
-workflow has not run on GitHub (no push).
+and Windows with 3.13 only); a newer push to a `ci-prova-*` branch stops the run it supersedes. CI run 45953426965
+(27 November 2026, commit 7b688ff of the `ci-prova-0.1.2` branch): 30 jobs, `ubuntu-24.04`, `macos-15` and
+`windows-2025`, each with Python 3.10 to 3.14, with and without `slh-dsa`, all passed; the release commit adds to
+7b688ff the refusal of a query or fragment in a backend URL with its test cases, the checksum step of the release
+workflow on its own line, and this text.
 
 ## 0.1.1 (2026-11-24)
 

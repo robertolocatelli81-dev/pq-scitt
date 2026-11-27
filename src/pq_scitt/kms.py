@@ -81,11 +81,12 @@ from pq_scitt._nucleo.programs import which_absolute   # omega-nucleo-comune 0.1
 ED25519_SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")  # RFC 8410 SPKI header
 
 # 0.1.2: the URL of a backend (vault url=, nethsm url=, awskms-http endpoint=) is written by `describe()` into what
-# `pq-scitt kms` prints, and was repeated by the errors. It MUST be http(s), a host and an optional port, no user
-# information (RFC 3986 section 3.2.1: "user:password" in the userinfo "is deprecated"; applications "should reject the
+# `pq-scitt kms` prints, and was repeated by the errors. It MUST be http(s), a host, an optional port and an optional
+# path (printed by describe()), no query or fragment (the API path is appended after the URL: with either, no request
+# reached the API), no user information (RFC 3986 section 3.2.1: "user:password" in the userinfo "is deprecated"; applications "should reject the
 # storage of such data in unencrypted form"), printable ASCII, no space or backslash. Any other is a ValueError that does
 # not repeat it.
-_URL = re.compile(r"[Hh][Tt][Tt][Pp][Ss]?://(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~-]+)(?::[0-9]{0,5})?(?:[/?#][!-\[\]-~]*)?")
+_URL = re.compile(r'[Hh][Tt][Tt][Pp][Ss]?://(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~-]+)(?::[0-9]{0,5})?(?:/[!"$-/0->@-\[\]-~]*)?')
 _LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
 
